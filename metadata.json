@@ -1,0 +1,5 @@
+{
+  "name": "Locker Room",
+  "description": "A comprehensive football tournament management system with real-time updates and RBAC.",
+  "requestFramePermissions": []
+}

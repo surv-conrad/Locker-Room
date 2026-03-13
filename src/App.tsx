@@ -1,0 +1,402 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { useState } from 'react';
+import { useTournament } from './hooks/useTournament';
+import { Teams } from './components/Teams';
+import { Fixtures } from './components/Fixtures';
+import { LeagueTable } from './components/LeagueTable';
+import { PlayerStats } from './components/PlayerStats';
+import { UserManual } from './components/UserManual';
+import { SettingsModal } from './components/SettingsModal';
+import { TournamentManagementModal } from './components/TournamentManagementModal';
+import { DashboardModal } from './components/DashboardModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { ComingSoonModal } from './components/ComingSoonModal';
+import { AdminPanel } from './components/AdminPanel';
+import { Settings as SettingsIcon, Users, CalendarDays, Trophy, Code2, ExternalLink, Sun, BarChart2, LogIn, LogOut, Loader2, Book, Shield } from 'lucide-react';
+import { cn } from './utils';
+import { signInWithGoogle, logout } from './firebase';
+
+type Tab = 'table' | 'teams' | 'fixtures' | 'stats' | 'manual';
+
+export default function App() {
+  const queryParams = new URLSearchParams(window.location.search);
+  const publicTournamentId = queryParams.get('tournamentId') || undefined;
+  
+  const {
+    teams,
+    groups,
+    fixtures,
+    settings,
+    allUsers,
+    updateUserRole,
+    setSettings,
+    addTeam,
+    editTeam,
+    deleteTeam,
+    addGroup,
+    deleteGroup,
+    generateFixtures,
+    updateFixture,
+    updateFixtureDetails,
+    updateMatchdayDate,
+    toggleFixtureStarted,
+    toggleFixturePlayed,
+    getLeagueTable,
+    generateKnockoutFixtures,
+    generateTestData,
+    addMatchEvent,
+    removeMatchEvent,
+    getPlayerStats,
+    reassignFixturesFromMatchday,
+    fillAllTeamSheetsWithTestData,
+    reorderTeams,
+    reorderFixtures,
+    toggleRole,
+    loading,
+    userId,
+    isAdmin,
+    isSuperAdmin,
+    userRole
+  } = useTournament(publicTournamentId);
+
+  const [activeTab, setActiveTab] = useState<Tab>('fixtures');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+  const [isTournamentManagementOpen, setIsTournamentManagementOpen] = useState(false);
+  const [isDashboardOpen, setIsDashboardOpen] = useState(false);
+  const [comingSoonFeature, setComingSoonFeature] = useState<string | null>(null);
+  const [matchFilter, setMatchFilter] = useState<'all' | 'hide_past' | 'current'>('all');
+  const [nameDisplay, setNameDisplay] = useState<'team' | 'player'>('team');
+
+  const handleNotImplemented = (feature: string) => {
+    setComingSoonFeature(feature);
+  };
+
+  const tabs = [
+    { id: 'fixtures', label: 'Fixtures & Results', icon: CalendarDays },
+    { id: 'table', label: 'League Table', icon: Trophy },
+    { id: 'stats', label: 'Player Stats', icon: BarChart2 },
+    { id: 'teams', label: 'Teams Database', icon: Users },
+    { id: 'manual', label: 'User Manual', icon: Book },
+  ] as const;
+
+  return (
+    <div className="min-h-screen bg-[#0B0E14] text-gray-100 font-sans flex selection:bg-indigo-500/30">
+      {/* Sidebar */}
+      <aside className="w-16 bg-[#151821] border-r border-gray-800 flex flex-col items-center py-4 gap-8 z-40 flex-shrink-0">
+        <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-bold shadow-lg shadow-indigo-900/20">
+          <Code2 className="w-6 h-6" />
+        </div>
+        <nav className="flex flex-col gap-4 w-full items-center">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={cn(
+                  "p-3 rounded-xl transition-all duration-200 group relative",
+                  isActive
+                    ? "bg-indigo-600/10 text-indigo-400"
+                    : "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50"
+                )}
+                title={tab.label}
+              >
+                <Icon className="w-5 h-5" />
+                {/* Tooltip */}
+                <div className="absolute left-full ml-4 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50">
+                  {tab.label}
+                </div>
+              </button>
+            );
+          })}
+          <div className="w-8 h-px bg-gray-800 my-2" />
+          {isAdmin && (
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-3 rounded-xl text-gray-500 hover:text-gray-300 hover:bg-gray-800/50 transition-all duration-200"
+              title="Settings"
+            >
+              <SettingsIcon className="w-5 h-5" />
+            </button>
+          )}
+          {isSuperAdmin && (
+            <button
+              onClick={() => setIsAdminPanelOpen(true)}
+              className="p-3 rounded-xl text-gray-500 hover:text-indigo-400 hover:bg-gray-800/50 transition-all duration-200"
+              title="Admin Panel"
+            >
+              <Shield className="w-5 h-5" />
+            </button>
+          )}
+        </nav>
+      </aside>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col h-screen overflow-hidden">
+        {/* Topbar */}
+        <header className="h-16 bg-[#151821] border-b border-gray-800 flex items-center justify-between px-6 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold text-white tracking-tight">Locker Room</h1>
+          </div>
+          <div className="flex items-center gap-6 text-sm font-medium text-gray-400">
+            <button onClick={() => handleNotImplemented('Clubs')} className="hover:text-white transition-colors">Clubs</button>
+            {isAdmin ? (
+              <button onClick={() => setIsTournamentManagementOpen(true)} className="text-indigo-400 hover:text-white transition-colors">{settings.tournamentName || "Proball"}</button>
+            ) : (
+              <span className="text-indigo-400">{settings.tournamentName || "Proball"}</span>
+            )}
+            
+            {userId && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-800/50 border border-gray-700/50">
+                <div className={cn(
+                  "w-2 h-2 rounded-full",
+                  isAdmin ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]"
+                )} />
+                <span className="text-xs font-semibold uppercase tracking-wider text-gray-300">
+                  {isAdmin ? 'Admin' : 'Viewer'}
+                </span>
+                {isSuperAdmin && (
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleRole();
+                    }}
+                    className="ml-1 p-1 hover:bg-gray-700 rounded-md transition-colors text-indigo-400"
+                    title="Toggle Role (Super Admin Only)"
+                  >
+                    <SettingsIcon className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {userId ? (
+              <button 
+                onClick={() => logout()} 
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-all"
+              >
+                <LogOut className="w-4 h-4" />
+                Sign Out
+              </button>
+            ) : (
+              <button 
+                onClick={() => signInWithGoogle()} 
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-all"
+              >
+                <LogIn className="w-4 h-4" />
+                Sign In
+              </button>
+            )}
+
+            <button onClick={() => setActiveTab('manual')} className="hover:text-white transition-colors">More</button>
+            <div className="w-px h-4 bg-gray-700" />
+            <button onClick={() => handleNotImplemented('Light Mode')} className="p-1.5 rounded-md bg-gray-800 text-gray-300 hover:text-white border border-gray-700 transition-colors">
+              <Sun className="w-4 h-4" />
+            </button>
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-auto p-6 md:p-8">
+          {loading ? (
+            <div className="h-full flex flex-col items-center justify-center gap-4 text-gray-400">
+              <Loader2 className="w-10 h-10 animate-spin text-indigo-500" />
+              <p className="text-lg font-medium">Loading tournament data...</p>
+            </div>
+          ) : !userId ? (
+            <div className="h-full flex flex-col items-center justify-center gap-6 text-center max-w-md mx-auto">
+              <div className="w-20 h-20 bg-indigo-600/10 rounded-3xl flex items-center justify-center text-indigo-500 mb-2">
+                <Trophy className="w-10 h-10" />
+              </div>
+              <h2 className="text-3xl font-bold text-white">Welcome to Locker Room</h2>
+              <p className="text-gray-400 leading-relaxed">
+                Sign in to create and manage your tournaments. Your data will be synced across all your devices in real-time.
+              </p>
+              <button 
+                onClick={() => signInWithGoogle()} 
+                className="flex items-center gap-3 px-8 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-lg transition-all shadow-xl shadow-indigo-900/20"
+              >
+                <LogIn className="w-6 h-6" />
+                Sign in with Google
+              </button>
+            </div>
+          ) : (
+            <div className="max-w-[1600px] mx-auto">
+            {!isAdmin && isSuperAdmin && (
+              <div className="mb-6 p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-amber-500 rounded-lg text-white">
+                    <Trophy className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-white font-semibold">Viewing as Normal User</p>
+                    <p className="text-sm text-amber-200/60">Management tools are hidden. You are seeing exactly what your viewers see.</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => toggleRole()}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-white font-bold rounded-xl transition-all shadow-lg shadow-amber-900/20"
+                >
+                  Return to Admin
+                </button>
+              </div>
+            )}
+            {/* Tournament Header */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+              <div className="flex items-center gap-4">
+                {settings.logoUrl && (
+                  <img src={settings.logoUrl} alt="Logo" className="w-12 h-12 rounded-lg object-cover bg-gray-800" />
+                )}
+                <h2 className="text-3xl font-bold text-white">{settings.tournamentName || "Some Cool Tournament"}</h2>
+              </div>
+              
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <div className="flex bg-[#1A1D24]/80 backdrop-blur-md rounded-xl p-1 border border-gray-800/50 shadow-sm">
+                  <button 
+                    onClick={() => setMatchFilter('all')}
+                    className={cn("px-3 py-1.5 rounded-lg transition-all duration-200", matchFilter === 'all' ? "bg-indigo-600/20 text-indigo-400 font-medium" : "text-gray-400 hover:text-gray-200")}
+                  >
+                    All matches
+                  </button>
+                  <button 
+                    onClick={() => setMatchFilter('hide_past')}
+                    className={cn("px-3 py-1.5 rounded-lg transition-all duration-200", matchFilter === 'hide_past' ? "bg-indigo-600/20 text-indigo-400 font-medium" : "text-gray-400 hover:text-gray-200")}
+                  >
+                    Hide past matches
+                  </button>
+                  <button 
+                    onClick={() => setMatchFilter('current')}
+                    className={cn("px-3 py-1.5 rounded-lg transition-all duration-200", matchFilter === 'current' ? "bg-indigo-600/20 text-indigo-400 font-medium" : "text-gray-400 hover:text-gray-200")}
+                  >
+                    Current matches
+                  </button>
+                </div>
+                <div className="flex bg-[#1A1D24]/80 backdrop-blur-md rounded-xl p-1 border border-gray-800/50 shadow-sm">
+                  <button 
+                    onClick={() => setNameDisplay('team')}
+                    className={cn("px-3 py-1.5 rounded-lg transition-all duration-200", nameDisplay === 'team' ? "bg-indigo-600/20 text-indigo-400 font-medium" : "text-gray-400 hover:text-gray-200")}
+                  >
+                    Team names
+                  </button>
+                  <button 
+                    onClick={() => setNameDisplay('player')}
+                    className={cn("px-3 py-1.5 rounded-lg transition-all duration-200", nameDisplay === 'player' ? "bg-indigo-600/20 text-indigo-400 font-medium" : "text-gray-400 hover:text-gray-200")}
+                  >
+                    Player names
+                  </button>
+                </div>
+                <button 
+                  onClick={() => setIsDashboardOpen(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-indigo-600/10 border border-indigo-500/30 text-indigo-400 rounded-xl hover:bg-indigo-600/20 transition-all duration-200 font-medium ml-2 shadow-sm"
+                >
+                  <ExternalLink className="w-4 h-4" /> View dashboard
+                </button>
+              </div>
+            </div>
+
+            <div className="">
+              {activeTab === 'table' && <LeagueTable table={getLeagueTable()} fixtures={fixtures} groups={groups} />}
+              {activeTab === 'stats' && <PlayerStats stats={getPlayerStats()} />}
+              {activeTab === 'teams' && (
+                <Teams 
+                  teams={teams} 
+                  groups={groups}
+                  settings={settings}
+                  isAdmin={isAdmin}
+                  onAddTeam={addTeam} 
+                  onEditTeam={editTeam}
+                  onDeleteTeam={deleteTeam} 
+                  onReorderTeams={reorderTeams}
+                  onAddGroup={addGroup}
+                  onDeleteGroup={deleteGroup}
+                  onGenerateTestData={generateTestData}
+                  onFillTeamSheets={fillAllTeamSheetsWithTestData}
+                />
+              )}
+              {activeTab === 'fixtures' && (
+                <Fixtures 
+                  fixtures={fixtures} 
+                  teams={teams} 
+                  groups={groups}
+                  settings={settings}
+                  isAdmin={isAdmin}
+                  onGenerateFixtures={generateFixtures} 
+                  onGenerateKnockoutFixtures={generateKnockoutFixtures}
+                  onUpdateFixture={updateFixture} 
+                  onUpdateFixtureDetails={updateFixtureDetails}
+                  onUpdateMatchdayDate={updateMatchdayDate}
+                  onToggleFixtureStarted={toggleFixtureStarted}
+                  onToggleFixturePlayed={toggleFixturePlayed}
+                  onAddGroup={addGroup}
+                  onEditTeam={editTeam}
+                  onAddMatchEvent={addMatchEvent}
+                  onRemoveMatchEvent={removeMatchEvent}
+                  onReorderFixtures={reorderFixtures}
+                  onReassignFixturesFromMatchday={reassignFixturesFromMatchday}
+                  matchFilter={matchFilter}
+                  nameDisplay={nameDisplay}
+                />
+              )}
+              {activeTab === 'manual' && <UserManual />}
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+
+      {/* Settings Modal */}
+      {isSettingsOpen && (
+        <SettingsModal
+          settings={settings}
+          onSave={setSettings}
+          onClose={() => setIsSettingsOpen(false)}
+        />
+      )}
+
+      {isTournamentManagementOpen && (
+        <TournamentManagementModal
+          settings={settings}
+          teams={teams}
+          groups={groups}
+          tournamentId={settings.tournamentName || 'default-tournament'}
+          userId={userId || ''}
+          onSave={setSettings}
+          onFillTeamSheets={fillAllTeamSheetsWithTestData}
+          onClose={() => setIsTournamentManagementOpen(false)}
+        />
+      )}
+      {isAdminPanelOpen && (
+        <AdminPanel
+          users={allUsers}
+          onUpdateRole={updateUserRole}
+          onClose={() => setIsAdminPanelOpen(false)}
+        />
+      )}
+
+      {/* Dashboard Modal */}
+      {isDashboardOpen && (
+        <ErrorBoundary>
+          <DashboardModal
+            teams={teams}
+            fixtures={fixtures}
+            leagueTable={getLeagueTable()}
+            onClose={() => setIsDashboardOpen(false)}
+          />
+        </ErrorBoundary>
+      )}
+
+      {/* Coming Soon Modal */}
+      {comingSoonFeature && (
+        <ComingSoonModal
+          feature={comingSoonFeature}
+          onClose={() => setComingSoonFeature(null)}
+        />
+      )}
+    </div>
+  );
+}

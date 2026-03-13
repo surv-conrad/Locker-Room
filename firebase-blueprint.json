@@ -1,0 +1,214 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the system",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "viewer"] },
+        "displayName": { "type": "string" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Player": {
+      "title": "Player",
+      "description": "A player in a team",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "number": { "type": "string" },
+        "position": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "isCaptain": { "type": "boolean" },
+        "isViceCaptain": { "type": "boolean" },
+        "isActive": { "type": "boolean" },
+        "pitchPosition": {
+          "type": "object",
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" }
+          }
+        }
+      },
+      "required": ["id", "name", "number", "position"]
+    },
+    "Group": {
+      "title": "Group",
+      "description": "A tournament group",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "name", "userId"]
+    },
+    "Team": {
+      "title": "Team",
+      "description": "A football team",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "initial": { "type": "string" },
+        "manager": { "type": "string" },
+        "phone": { "type": "string" },
+        "players": {
+          "type": "array",
+          "items": { "$ref": "Player" }
+        },
+        "groupId": { "type": "string" },
+        "pitchSize": {
+          "type": "object",
+          "properties": {
+            "width": { "type": "number" },
+            "height": { "type": "number" }
+          }
+        },
+        "pitchScrollPosition": {
+          "type": "object",
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" }
+          }
+        },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "name", "initial", "userId"]
+    },
+    "MatchEvent": {
+      "title": "MatchEvent",
+      "description": "An event during a match",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "fixtureId": { "type": "string" },
+        "teamId": { "type": "string" },
+        "playerId": { "type": "string" },
+        "type": { "type": "string", "enum": ["goal", "yellow_card", "red_card"] },
+        "minute": { "type": "number" }
+      },
+      "required": ["id", "fixtureId", "teamId", "playerId", "type", "minute"]
+    },
+    "Fixture": {
+      "title": "Fixture",
+      "description": "A match fixture",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "matchday": { "type": "number" },
+        "homeTeamId": { "type": "string" },
+        "awayTeamId": { "type": "string" },
+        "homeScore": { "type": "number" },
+        "awayScore": { "type": "number" },
+        "isPlayed": { "type": "boolean" },
+        "isStarted": { "type": "boolean" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "pitchId": { "type": "string" },
+        "groupId": { "type": "string" },
+        "events": {
+          "type": "array",
+          "items": { "$ref": "MatchEvent" }
+        },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "matchday", "homeTeamId", "awayTeamId", "isPlayed", "isStarted", "date", "userId"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Tournament settings",
+      "type": "object",
+      "properties": {
+        "logoUrl": { "type": "string" },
+        "startDate": { "type": "string" },
+        "tournamentName": { "type": "string" },
+        "description": { "type": "string" },
+        "numberOfTeams": { "type": "number" },
+        "numberOfPitches": { "type": "number" },
+        "pitches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" }
+            }
+          }
+        },
+        "tieBreaker": { "type": "string", "enum": ["goalDifference", "headToHead", "fairPlay"] },
+        "primaryColor": { "type": "string" },
+        "matchdaySettings": {
+          "type": "object",
+          "properties": {
+            "numberOfMatchdays": { "type": "number" },
+            "matchesPerDay": { "type": "number" },
+            "restingDays": { "type": "number" },
+            "customMatchdays": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "matchday": { "type": "number" },
+                  "date": { "type": "string" },
+                  "time": { "type": "string" },
+                  "matchesPerDay": { "type": "number" },
+                  "restingDays": { "type": "number" }
+                }
+              }
+            }
+          }
+        },
+        "groupStage": {
+          "type": "object",
+          "properties": {
+            "numberOfWinners": { "type": "number" },
+            "numberOfLegs": { "type": "number" }
+          }
+        },
+        "knockoutStage": {
+          "type": "object",
+          "properties": {
+            "numberOfWinners": { "type": "number" },
+            "numberOfLegs": { "type": "number" }
+          }
+        },
+        "playerSettings": {
+          "type": "object",
+          "properties": {
+            "maxPlayersPerTeam": { "type": "number" },
+            "activePlayersPerSide": { "type": "number" },
+            "maxSubs": { "type": "number" }
+          }
+        },
+        "userId": { "type": "string" }
+      },
+      "required": ["userId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and roles"
+    },
+    "/users/{userId}/groups/{groupId}": {
+      "schema": "Group",
+      "description": "Groups for a user's tournament"
+    },
+    "/users/{userId}/teams/{teamId}": {
+      "schema": "Team",
+      "description": "Teams for a user's tournament"
+    },
+    "/users/{userId}/fixtures/{fixtureId}": {
+      "schema": "Fixture",
+      "description": "Fixtures for a user's tournament"
+    },
+    "/users/{userId}/settings/current": {
+      "schema": "Settings",
+      "description": "Settings for a user's tournament"
+    }
+  }
+}
