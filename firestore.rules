@@ -157,7 +157,8 @@ service cloud.firestore {
 
     match /public_tournaments/{tournamentId} {
       allow read: if true;
-      allow create, update, delete: if isAuthenticated() && request.auth.uid == resource.data.ownerId;
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.ownerId;
+      allow update, delete: if isAuthenticated() && request.auth.uid == resource.data.ownerId;
     }
 
     // Default deny
