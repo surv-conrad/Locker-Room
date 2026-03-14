@@ -137,7 +137,7 @@ export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingF
           min="0"
           disabled={!fixture.isStarted || fixture.isPlayed || !isAdmin}
           className="w-12 bg-black/20 text-right font-bold outline-none focus:bg-black/40 focus:ring-1 focus:ring-indigo-500/50 rounded-md px-2 py-1 transition-all disabled:opacity-50"
-          value={fixture.homeScore ?? ''}
+          value={isNaN(fixture.homeScore as number) ? '' : (fixture.homeScore ?? '')}
           onChange={(e) => {
             const val = e.target.value === '' ? null : parseInt(e.target.value);
             handleScoreChange(fixture, true, val);
@@ -737,7 +737,7 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                                 min="0"
                                 disabled={!fixture.isStarted || fixture.isPlayed}
                                 className="w-12 bg-black/20 text-right font-bold outline-none focus:bg-black/40 focus:ring-1 focus:ring-indigo-500/50 rounded-md px-2 py-1 transition-all disabled:opacity-50"
-                                value={fixture.homeScore ?? ''}
+                                value={isNaN(fixture.homeScore as number) ? '' : (fixture.homeScore ?? '')}
                                 onChange={(e) => {
                                   const val = e.target.value === '' ? null : parseInt(e.target.value);
                                   handleScoreChange(fixture, true, val);
