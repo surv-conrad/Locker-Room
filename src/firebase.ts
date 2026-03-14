@@ -13,14 +13,23 @@ export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
 
 export const signInWithGoogle = async () => {
+  console.log("Attempting to sign in with Google...");
   try {
-    return await signInWithPopup(auth, googleProvider);
-  } catch (error: any) {
-    if (error.code === 'auth/popup-closed-by-user') {
-      // Silently handle popup closure by user
+    // Check if popup blocker might be active
+    const testWindow = window.open('', '_blank');
+    if (!testWindow) {
+      console.error("CRITICAL: Popup blocked by browser. Please allow popups for this site.");
+      alert("Popup blocked! Please allow popups for this site to log in.");
       return null;
     }
-    console.error("Authentication error:", error);
+    testWindow.close();
+
+    return await signInWithPopup(auth, googleProvider);
+  } catch (error: any) {
+    console.error("Detailed Authentication error:", error);
+    if (error.code === 'auth/popup-closed-by-user') {
+      return null;
+    }
     throw error;
   }
 };
