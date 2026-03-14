@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Team, Player, Settings } from '../types';
-import { X, Plus, Trash2, Save, Users, Layout, List, Shield, ShieldAlert, Camera, Move, RefreshCw, Star, ChevronRight, Search, Info, RotateCcw, Image as ImageIcon, Pencil, Upload } from 'lucide-react';
+import { X, Plus, Trash2, Save, Users, Layout, List, Shield, ShieldAlert, Camera, Move, RefreshCw, Star, ChevronRight, Search, Info, RotateCcw, Image as ImageIcon, Pencil, Upload, Download } from 'lucide-react';
+import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
+import { useExport } from '../contexts/ExportContext';
 import { generateId, cn } from '../utils';
 import { exportAsImage } from '../utils/exportImage';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -33,6 +35,20 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
   const [photoUrl, setPhotoUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'pitch'>('pitch');
+  const { setExportOptions } = useExport();
+
+  useEffect(() => {
+    if (viewMode === 'pitch') {
+      setExportOptions([
+        { label: `Export ${team.name} Pitch (Image)`, icon: <ImageIcon className="w-4 h-4" />, onClick: () => exportAsImage(pitchRef.current, `${team.name.toLowerCase().replace(/\s+/g, '-')}-pitch`) }
+      ]);
+    } else {
+      setExportOptions([]);
+    }
+    
+    return () => setExportOptions([]);
+  }, [viewMode, team.name, setExportOptions]);
+
   const [subbingPlayerId, setSubbingPlayerId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -70,6 +86,12 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
   const currentScrollPosRef = useRef<{x: number, y: number} | undefined>(pitchScrollPosition);
   const [isResizing, setIsResizing] = useState(false);
   const resizeStartPos = useRef<{x: number, y: number, w: number, h: number} | null>(null);
+
+  useKeyboardShortcut('i', () => {
+    if (viewMode === 'pitch') {
+      exportAsImage(pitchRef.current, `${team.name.toLowerCase().replace(/\s+/g, '-')}-pitch`);
+    }
+  });
 
   const activePlayers = players.filter(p => p.isActive);
   const benchPlayers = players.filter(p => !p.isActive);
@@ -481,7 +503,7 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
               <button
                 onClick={() => exportAsImage(pitchRef.current, `${team.name.toLowerCase().replace(/\s+/g, '-')}-pitch`)}
                 className="flex items-center gap-2 px-4 py-2 bg-emerald-600/20 text-emerald-400 rounded-xl hover:bg-emerald-600/30 transition-colors font-medium text-sm border border-emerald-500/30"
-                title="Export pitch layout as an image"
+                title="Export pitch as image"
               >
                 <ImageIcon className="w-4 h-4" /> Export Image
               </button>

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useTournament } from './hooks/useTournament';
 import { Teams } from './components/Teams';
 import { Fixtures } from './components/Fixtures';
@@ -11,12 +11,14 @@ import { LeagueTable } from './components/LeagueTable';
 import { PlayerStats } from './components/PlayerStats';
 import { UserManual } from './components/UserManual';
 import { SettingsModal } from './components/SettingsModal';
+import { ShareModal } from './components/ShareModal';
+import { useExport } from './contexts/ExportContext';
 import { TournamentManagementModal } from './components/TournamentManagementModal';
 import { DashboardModal } from './components/DashboardModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ComingSoonModal } from './components/ComingSoonModal';
 import { AdminPanel } from './components/AdminPanel';
-import { Settings as SettingsIcon, Users, CalendarDays, Trophy, Code2, ExternalLink, Sun, BarChart2, LogIn, LogOut, Loader2, Book, Shield } from 'lucide-react';
+import { Settings as SettingsIcon, Users, CalendarDays, Trophy, Code2, ExternalLink, Sun, BarChart2, LogIn, LogOut, Loader2, Book, Shield, Download, Image as ImageIcon } from 'lucide-react';
 import { cn } from './utils';
 import { signInWithGoogle, logout } from './firebase';
 
@@ -63,14 +65,175 @@ export default function App() {
     userRole
   } = useTournament(publicTournamentId);
 
+  const { exportOptions } = useExport();
   const [activeTab, setActiveTab] = useState<Tab>('fixtures');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isShareOpen, setIsShareOpen] = useState(false);
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [isTournamentManagementOpen, setIsTournamentManagementOpen] = useState(false);
   const [isDashboardOpen, setIsDashboardOpen] = useState(false);
   const [comingSoonFeature, setComingSoonFeature] = useState<string | null>(null);
   const [matchFilter, setMatchFilter] = useState<'all' | 'hide_past' | 'current'>('all');
   const [nameDisplay, setNameDisplay] = useState<'team' | 'player'>('team');
+
+  const playerStatsExportRef = useRef<HTMLDivElement>(null);
+
+  const handleExportLeagueTablePDF = () => {
+    import('jspdf').then(({ default: jsPDF }) => {
+      import('jspdf-autotable').then(({ default: autoTable }) => {
+        const doc = new jsPDF();
+        doc.text('League Table', 14, 15);
+        const tableData = getLeagueTable().map((row, index) => [
+          index + 1, row.teamName, row.played, row.won, row.drawn, row.lost, row.goalsFor, row.goalsAgainst, row.goalDifference, row.points
+        ]);
+        autoTable(doc, {
+          head: [['Pos', 'Team', 'P', 'W', 'D', 'L', 'GF', 'GA', 'GD', 'Pts']],
+          body: tableData,
+          startY: 20,
+          theme: 'grid',
+          styles: { fontSize: 10, fillColor: [42, 45, 53], textColor: [255, 255, 255] },
+          headStyles: { fillColor: [30, 136, 229] },
+          alternateRowStyles: { fillColor: [35, 38, 45] }
+        });
+        doc.save('league-table.pdf');
+      });
+    });
+  };
+
+  const handleExportLeagueTableCSV = () => {
+    import('papaparse').then(({ default: Papa }) => {
+      const headers = ['Pos', 'Team', 'P', 'W', 'D', 'L', 'GF', 'GA', 'GD', 'Pts'];
+      const rows = getLeagueTable().map((row, index) => [
+        index + 1, row.teamName, row.played, row.won, row.drawn, row.lost, row.goalsFor, row.goalsAgainst, row.goalDifference, row.points
+      ]);
+      const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", "league-table.csv");
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
+  };
+
+  const handleExportFixturesPDF = () => {
+    import('jspdf').then(({ default: jsPDF }) => {
+      import('jspdf-autotable').then(({ default: autoTable }) => {
+        const doc = new jsPDF();
+        doc.text('Tournament Fixtures', 14, 15);
+        const getTeamName = (id: string) => teams.find(t => t.id === id)?.name || 'Unknown Team';
+        const getPitchName = (id?: string) => settings.pitches?.find(p => p.id === id)?.name || 'TBD';
+        const tableData = fixtures.map(f => [
+          `Matchday ${f.matchday}`, f.date, getTeamName(f.homeTeamId), f.isPlayed ? `${f.homeScore} - ${f.awayScore}` : 'vs', getTeamName(f.awayTeamId), getPitchName(f.pitchId)
+        ]);
+        autoTable(doc, {
+          head: [['Matchday', 'Date', 'Home Team', 'Score', 'Away Team', 'Pitch']],
+          body: tableData,
+          startY: 20,
+          theme: 'grid',
+          styles: { fontSize: 10, fillColor: [42, 45, 53], textColor: [255, 255, 255] },
+          headStyles: { fillColor: [30, 136, 229] },
+          alternateRowStyles: { fillColor: [35, 38, 45] }
+        });
+        doc.save('fixtures.pdf');
+      });
+    });
+  };
+
+  const handleExportFixturesCSV = () => {
+    import('papaparse').then(({ default: Papa }) => {
+      const getTeamName = (id: string) => teams.find(t => t.id === id)?.name || 'Unknown Team';
+      const getPitchName = (id?: string) => settings.pitches?.find(p => p.id === id)?.name || 'TBD';
+      const csvData = fixtures.map(f => ({
+        Matchday: f.matchday, Date: f.date, Time: f.time, HomeTeam: getTeamName(f.homeTeamId), AwayTeam: getTeamName(f.awayTeamId), HomeScore: f.homeScore ?? '', AwayScore: f.awayScore ?? '', Pitch: getPitchName(f.pitchId), Status: f.isPlayed ? 'Finished' : f.isStarted ? 'Ongoing' : 'Not Started'
+      }));
+      const csv = Papa.unparse(csvData);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", "fixtures.csv");
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
+  };
+
+  const handleExportPlayerStatsImage = () => {
+    import('./utils/exportImage').then(({ exportAsImage }) => {
+      if (playerStatsExportRef.current) {
+        exportAsImage(playerStatsExportRef.current, 'player-stats');
+      }
+    });
+  };
+
+  const handleExportAllTeamsPDF = () => {
+    import('jspdf').then(({ default: jsPDF }) => {
+      import('jspdf-autotable').then(({ default: autoTable }) => {
+        const doc = new jsPDF();
+        teams.forEach((team, index) => {
+          if (index > 0) doc.addPage();
+          doc.setFontSize(20);
+          doc.text(`${team.name} - Team Sheet`, 14, 20);
+          
+          const activePlayers = team.players.filter(p => p.isActive);
+          const benchPlayers = team.players.filter(p => !p.isActive);
+          
+          autoTable(doc, {
+            head: [['#', 'Name', 'Position', 'Status']],
+            body: [
+              ...activePlayers.map(p => [p.number, p.name, p.position, 'Active']),
+              ...benchPlayers.map(p => [p.number, p.name, p.position, 'Bench'])
+            ],
+            startY: 30,
+            theme: 'grid',
+            styles: { fontSize: 10, fillColor: [42, 45, 53], textColor: [255, 255, 255] },
+            headStyles: { fillColor: [30, 136, 229] },
+            alternateRowStyles: { fillColor: [35, 38, 45] }
+          });
+        });
+        doc.save('all-team-sheets.pdf');
+      });
+    });
+  };
+
+  const handleExportAllTeamsCSV = () => {
+    import('papaparse').then(({ default: Papa }) => {
+      const csvData = teams.flatMap(team => 
+        team.players.map(p => ({
+          Team: team.name,
+          Number: p.number,
+          Name: p.name,
+          Position: p.position,
+          Status: p.isActive ? 'Active' : 'Bench'
+        }))
+      );
+      const csv = Papa.unparse(csvData);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", "all-teams.csv");
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
+  };
+
+  const globalExportOptions = [
+    { label: 'Export League Table (PDF)', icon: <Download className="w-4 h-4" />, onClick: handleExportLeagueTablePDF },
+    { label: 'Export League Table (CSV)', icon: <Download className="w-4 h-4" />, onClick: handleExportLeagueTableCSV },
+    { label: 'Export Fixtures (PDF)', icon: <Download className="w-4 h-4" />, onClick: handleExportFixturesPDF },
+    { label: 'Export Fixtures (CSV)', icon: <Download className="w-4 h-4" />, onClick: handleExportFixturesCSV },
+    { label: 'Export Player Stats (Image)', icon: <ImageIcon className="w-4 h-4" />, onClick: handleExportPlayerStatsImage },
+    { label: 'Export All Team Sheets (PDF)', icon: <Download className="w-4 h-4" />, onClick: handleExportAllTeamsPDF },
+    { label: 'Export All Teams (CSV)', icon: <Download className="w-4 h-4" />, onClick: handleExportAllTeamsCSV },
+  ];
 
   const handleNotImplemented = (feature: string) => {
     setComingSoonFeature(feature);
@@ -145,7 +308,7 @@ export default function App() {
             <h1 className="text-xl font-bold text-white tracking-tight">Locker Room</h1>
           </div>
           <div className="flex items-center gap-6 text-sm font-medium text-gray-400">
-            <button onClick={() => handleNotImplemented('Clubs')} className="hover:text-white transition-colors">Clubs</button>
+            <button onClick={() => setIsShareOpen(true)} className="hover:text-white transition-colors">Share</button>
             {isAdmin ? (
               <button onClick={() => setIsTournamentManagementOpen(true)} className="text-indigo-400 hover:text-white transition-colors">{settings.tournamentName || "Proball"}</button>
             ) : (
@@ -208,7 +371,7 @@ export default function App() {
               <Loader2 className="w-10 h-10 animate-spin text-indigo-500" />
               <p className="text-lg font-medium">Loading tournament data...</p>
             </div>
-          ) : !userId ? (
+          ) : (!userId && !publicTournamentId) ? (
             <div className="h-full flex flex-col items-center justify-center gap-6 text-center max-w-md mx-auto">
               <div className="w-20 h-20 bg-indigo-600/10 rounded-3xl flex items-center justify-center text-indigo-500 mb-2">
                 <Trophy className="w-10 h-10" />
@@ -350,6 +513,21 @@ export default function App() {
     </div>
 
       {/* Settings Modal */}
+      {isShareOpen && (
+        <ShareModal
+          tournamentId={publicTournamentId || settings.tournamentName || 'default'}
+          onClose={() => setIsShareOpen(false)}
+          exportOptions={[...exportOptions, ...globalExportOptions]}
+        />
+      )}
+
+      {/* Hidden containers for image exports */}
+      <div style={{ position: 'absolute', left: '-9999px', top: '-9999px', pointerEvents: 'none' }}>
+        <div ref={playerStatsExportRef} className="w-[1200px] bg-[#0B0E14] p-8 text-white">
+          <PlayerStats stats={getPlayerStats()} />
+        </div>
+      </div>
+
       {isSettingsOpen && (
         <SettingsModal
           settings={settings}

@@ -10,7 +10,8 @@ export function UserManual() {
         'Locker Room uses Role-Based Access Control (RBAC) to ensure data security.',
         'Administrators: Can manage teams, groups, fixtures, and settings. They have full control over the tournament data.',
         'Viewers: Can view fixtures, results, tables, and stats but cannot make any changes.',
-        'Authentication: Sign in with your Google account to access the system. Your role is assigned based on your email address.'
+        'Authentication: Sign in with your Google account to access the system.',
+        'Super Admin: The creator of the tournament (or the designated super admin) will see a Shield icon in the top header. Clicking this opens the Admin Panel, where they can elevate other users from Viewer to Admin.'
       ]
     },
     {
@@ -55,9 +56,10 @@ export function UserManual() {
       title: 'Exporting Data',
       icon: Download,
       content: [
-        'PDF/CSV: Export fixture lists and results for offline use.',
-        'Images: Generate high-quality images of the fixtures or bracket for sharing on social media.',
-        'Dashboard: View a comprehensive overview of the tournament status.'
+        'Global Share Menu: Click the "Share" button in the top right to access all export options in one place.',
+        'PDF/CSV: Export fixture lists, league tables, and full team lists/rosters for offline use.',
+        'Images: Generate high-quality images of the fixtures, player stats, or team lineups for sharing on social media.',
+        'Team Lineups: When viewing a team\'s VOLTA PITCH lineup, you can click the "Export Image" button directly in the modal to save the pitch view.'
       ]
     }
   ];

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Papa from 'papaparse';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
@@ -6,6 +6,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Fixture, Team, Group, Settings, MatchEvent } from '../types';
 import { ModernSelect } from './ModernSelect';
 import { Calendar, RefreshCw, Download, Pencil, Trophy, X, Save, Activity, List, GitMerge, Image as ImageIcon } from 'lucide-react';
+import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { cn } from '../utils';
@@ -303,6 +304,11 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
     document.body.removeChild(link);
   };
 
+  useKeyboardShortcut('p', handleExportPDF);
+  useKeyboardShortcut('c', handleExportCSV);
+  useKeyboardShortcut('p', handleExportPDF);
+  useKeyboardShortcut('c', handleExportCSV);
+
   if (teams.length < 2) {
     return (
       <div className="bg-[#151821] p-12 rounded-2xl border border-gray-800 text-center shadow-lg">
@@ -394,19 +400,6 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                     />
                   )}
                 </>
-              )}
-              {fixtures.length > 0 && (
-                <div className="flex gap-2">
-                  <button onClick={handleExportPDF} className="flex items-center gap-2 px-4 py-2 bg-[#1A1D24]/80 backdrop-blur-md border border-gray-700/50 text-gray-300 rounded-xl hover:bg-gray-800 transition-all duration-200 text-sm shadow-sm">
-                    <Download className="w-4 h-4" /> Export PDF
-                  </button>
-                  <button onClick={handleExportCSV} className="flex items-center gap-2 px-4 py-2 bg-[#1A1D24]/80 backdrop-blur-md border border-gray-700/50 text-gray-300 rounded-xl hover:bg-gray-800 transition-all duration-200 text-sm shadow-sm">
-                    <Download className="w-4 h-4" /> Export CSV
-                  </button>
-                  <button onClick={() => exportAsImage(fixturesRef.current, 'fixtures')} className="flex items-center gap-2 px-4 py-2 bg-[#1A1D24]/80 backdrop-blur-md border border-gray-700/50 text-gray-300 rounded-xl hover:bg-gray-800 transition-all duration-200 text-sm shadow-sm">
-                    <ImageIcon className="w-4 h-4" /> Export Image
-                  </button>
-                </div>
               )}
               {isAdmin && (
                 <button onClick={() => {

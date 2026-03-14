@@ -1,7 +1,8 @@
 import { PlayerStat } from '../types';
-import { Trophy, Award, AlertTriangle, AlertOctagon, Image as ImageIcon, Pencil } from 'lucide-react';
+import { Trophy, Award, AlertTriangle, AlertOctagon, Image as ImageIcon, Pencil, Download } from 'lucide-react';
 import { cn } from '../utils';
 import { useRef, useState } from 'react';
+import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { exportAsImage } from '../utils/exportImage';
 
 interface PlayerStatsProps {
@@ -11,6 +12,8 @@ interface PlayerStatsProps {
 export function PlayerStats({ stats }: PlayerStatsProps) {
   const [isEditing, setIsEditing] = useState(false);
   const statsRef = useRef<HTMLDivElement>(null);
+
+  useKeyboardShortcut('i', () => exportAsImage(statsRef.current, 'player-stats'));
   
   const topScorers = [...stats].sort((a, b) => b.goals - a.goals).slice(0, 10);
   const topYellows = [...stats].sort((a, b) => b.yellowCards - a.yellowCards).slice(0, 10);
@@ -24,12 +27,6 @@ export function PlayerStats({ stats }: PlayerStatsProps) {
           className={cn("flex items-center gap-2 px-4 py-2 bg-[#1A1D24]/80 backdrop-blur-md border border-gray-700/50 text-gray-300 rounded-xl hover:bg-gray-800 transition-all duration-200 text-sm shadow-sm", isEditing && "bg-indigo-600/20 text-indigo-400 border-indigo-500/50")}
         >
           <Pencil className="w-4 h-4" /> {isEditing ? 'Done Editing' : 'Edit Stats'}
-        </button>
-        <button
-          onClick={() => exportAsImage(statsRef.current, 'player-stats')}
-          className="flex items-center gap-2 px-4 py-2 bg-[#1A1D24]/80 backdrop-blur-md border border-gray-700/50 text-gray-300 rounded-xl hover:bg-gray-800 transition-all duration-200 text-sm shadow-sm"
-        >
-          <ImageIcon className="w-4 h-4" /> Export Image
         </button>
       </div>
 

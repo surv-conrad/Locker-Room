@@ -1,6 +1,7 @@
 import { LeagueRow, Fixture, Group } from '../types';
 import { Trophy, Download, Image as ImageIcon, Pencil, FileText } from 'lucide-react';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { cn } from '../utils';
@@ -91,6 +92,9 @@ export function LeagueTable({ table, fixtures, groups }: LeagueTableProps) {
     doc.save('league-table.pdf');
   };
 
+  useKeyboardShortcut('p', handleExportPDF);
+  useKeyboardShortcut('c', handleExportCSV);
+
   if (table.length === 0) {
     return (
       <div className="bg-[#151821]/80 backdrop-blur-md p-12 rounded-2xl border border-gray-800/50 text-center shadow-lg">
@@ -133,24 +137,6 @@ export function LeagueTable({ table, fixtures, groups }: LeagueTableProps) {
                 className={cn("flex items-center gap-2 px-4 py-2 bg-[#1A1D24]/80 backdrop-blur-md border border-gray-700/50 text-gray-300 rounded-xl hover:bg-gray-800 transition-all duration-200 text-sm shadow-sm", isEditing && "bg-indigo-600/20 text-indigo-400 border-indigo-500/50")}
               >
                 <Pencil className="w-4 h-4" /> {isEditing ? 'Done Editing' : 'Edit Table'}
-              </button>
-              <button
-                onClick={() => exportAsImage(tableRef.current, 'league-table')}
-                className="flex items-center gap-2 px-4 py-2 bg-[#1A1D24]/80 backdrop-blur-md border border-gray-700/50 text-gray-300 rounded-xl hover:bg-gray-800 transition-all duration-200 text-sm shadow-sm"
-              >
-                <ImageIcon className="w-4 h-4" /> Export Image
-              </button>
-              <button
-                onClick={handleExportCSV}
-                className="flex items-center gap-2 px-4 py-2 bg-[#1A1D24]/80 backdrop-blur-md border border-gray-700/50 text-gray-300 rounded-xl hover:bg-gray-800 transition-all duration-200 text-sm shadow-sm"
-              >
-                <FileText className="w-4 h-4" /> Export CSV
-              </button>
-              <button
-                onClick={handleExportPDF}
-                className="flex items-center gap-2 px-4 py-2 bg-[#1A1D24]/80 backdrop-blur-md border border-gray-700/50 text-gray-300 rounded-xl hover:bg-gray-800 transition-all duration-200 text-sm shadow-sm"
-              >
-                <Download className="w-4 h-4" /> Export PDF
               </button>
             </div>
           )}
