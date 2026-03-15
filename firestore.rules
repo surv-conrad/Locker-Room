@@ -99,16 +99,11 @@ service cloud.firestore {
     }
 
     function isValidFixture(userId) {
-      return hasOnlyAllowedFields(['id', 'matchday', 'homeTeamId', 'awayTeamId', 'isPlayed', 'isStarted', 'date', 'time', 'pitchId', 'groupId', 'events', 'userId']) &&
-             request.resource.data.userId == userId &&
-             request.resource.data.matchday is number &&
-             validString('date', 0, 20) &&
-             request.resource.data.id is string &&
-             exists(/databases/$(database)/documents/users/$(userId));
+      return true;
     }
 
     function isValidSettings(userId) {
-      return hasOnlyAllowedFields(['userId', 'tournamentName', 'logoUrl', 'description', 'numberOfTeams', 'numberOfPitches', 'pitches', 'tieBreaker', 'primaryColor', 'matchdaySettings', 'groupStage', 'knockoutStage', 'playerSettings']) &&
+      return hasOnlyAllowedFields(['userId', 'tournamentName', 'logoUrl', 'description', 'numberOfTeams', 'numberOfPitches', 'pitches', 'tieBreaker', 'primaryColor', 'matchdaySettings', 'groupStage', 'knockoutStage', 'playerSettings', 'startDate', 'startTime']) &&
              request.resource.data.userId == userId &&
              (request.resource.data.tournamentName is string ? request.resource.data.tournamentName.size() < 100 : true);
     }
@@ -120,34 +115,36 @@ service cloud.firestore {
     match /users {
       allow list: if isAdmin();
       match /{userId} {
-        allow read: if isOwner(userId) || isAdmin();
+        allow read: if true;
         allow create: if isOwner(userId) && isValidUser();
         allow update: if (isOwner(userId) && isValidUser()) || (isAdmin() && isValidUserForAdmin());
         allow delete: if isAdmin();
 
         match /groups/{groupId} {
-          allow read: if isOwner(userId) || isAdmin();
+          allow read: if true;
           allow create: if isOwner(userId) && isValidGroup(userId);
           allow update: if isOwner(userId) && isValidGroup(userId);
           allow delete: if isOwner(userId) || isAdmin();
         }
 
         match /teams/{teamId} {
-          allow read: if isOwner(userId) || isAdmin();
+          allow read: if true;
           allow create: if isOwner(userId) && isValidTeam(userId);
           allow update: if isOwner(userId) && isValidTeam(userId);
           allow delete: if isOwner(userId) || isAdmin();
         }
 
-        match /fixtures/{fixtureId} {
-          allow read: if isOwner(userId) || isAdmin();
-          allow create: if isOwner(userId) && isValidFixture(userId);
-          allow update: if isOwner(userId) && isValidFixture(userId);
-          allow delete: if isOwner(userId) || isAdmin();
+        match /fixtures {
+          allow read: if true;
+          allow write: if isOwner(userId);
+          match /{fixtureId} {
+            allow read: if true;
+            allow write: if isOwner(userId);
+          }
         }
 
         match /settings/{settingId} {
-          allow read: if isOwner(userId) || isAdmin();
+          allow read: if true;
           allow create: if isOwner(userId) && isValidSettings(userId);
           allow update: if isOwner(userId) && isValidSettings(userId);
           allow delete: if isOwner(userId) || isAdmin();

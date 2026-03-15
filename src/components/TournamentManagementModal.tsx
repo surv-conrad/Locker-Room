@@ -61,55 +61,140 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
     knockout: settings.knockoutStage || { numberOfWinners: 1, numberOfLegs: 2 },
   });
   const [isEditingSchedule, setIsEditingSchedule] = useState(false);
-  const [isManualMatchdays, setIsManualMatchdays] = useState(matchdaySettings.numberOfMatchdays > 0);
+  const [isManualMatchdays, setIsManualMatchdays] = useState(matchdaySettings.isManual ?? matchdaySettings.numberOfMatchdays > 0);
   const [showFillConfirm, setShowFillConfirm] = useState(false);
 
   // Calculate recommended matchdays based on teams, legs, matchesPerDay and restingDays
   const calculatedMatchdays = React.useMemo(() => {
-    let groupMatchesPerTeam = 0;
-    let totalGroupMatches = 0;
+    if (!numberOfTeams || numberOfTeams < 2) return 0;
 
+    let totalGroupMatches = 0;
     if (groups.length > 0) {
-      // Find max team count in any group
-      const maxTeamsInGroup = groups.reduce((max, group) => {
-        const count = teams.filter(t => t.groupId === group.id).length;
-        return Math.max(max, count);
-      }, 0);
-      
-      const estimatedTeamsPerGroup = maxTeamsInGroup > 0 ? maxTeamsInGroup : Math.ceil(numberOfTeams / groups.length);
-      groupMatchesPerTeam = (estimatedTeamsPerGroup - 1) * stageSettings.group.numberOfLegs;
-      
       groups.forEach(group => {
-        const count = teams.filter(t => t.groupId === group.id).length || Math.ceil(numberOfTeams / groups.length);
+        const actualCount = teams.filter(t => t.groupId === group.id).length;
+        const count = Math.max(actualCount, Math.ceil(numberOfTeams / groups.length));
         totalGroupMatches += (count * (count - 1) / 2) * stageSettings.group.numberOfLegs;
       });
     } else {
-      // League format
-      groupMatchesPerTeam = (numberOfTeams - 1) * stageSettings.group.numberOfLegs;
       totalGroupMatches = (numberOfTeams * (numberOfTeams - 1) / 2) * stageSettings.group.numberOfLegs;
     }
 
-    let recommendedDays = groupMatchesPerTeam;
-
-    // If restingDays is set, it increases the required days for each team
-    if (matchdaySettings.restingDays && matchdaySettings.restingDays > 0) {
-      recommendedDays = groupMatchesPerTeam + (groupMatchesPerTeam - 1) * matchdaySettings.restingDays;
-    }
-
-    // If matchesPerDay is set, it might be the bottleneck
-    if (matchdaySettings.matchesPerDay && matchdaySettings.matchesPerDay > 0) {
-      const daysByMatchesPerDay = Math.ceil(totalGroupMatches / matchdaySettings.matchesPerDay);
-      recommendedDays = Math.max(recommendedDays, daysByMatchesPerDay);
+    // Simulate scheduling to find required days
+    let remainingMatches = totalGroupMatches;
+    let day = 0;
+    let activeRestingDays = matchdaySettings.restingDays || 0;
+    let activeMatchesPerDay = matchdaySettings.matchesPerDay || 0;
+    let isMatchesPerDayAuto = (matchdaySettings.matchesPerDay || 0) === 0;
+    const maxPossibleMatchesPerDay = Math.floor(numberOfTeams / 2);
+    
+    // Track when each team last played in simulation
+    const teamLastPlayed = new Array(numberOfTeams).fill(-100);
+    
+    // Safety limit
+    while (remainingMatches > 0 && day < 2000) {
+      day++;
+      const custom = (matchdaySettings.customMatchdays || []).find(m => m.matchday === day);
+      
+      if (custom) {
+        if (custom.restingDays !== undefined && custom.restingDays !== null) {
+          activeRestingDays = custom.restingDays;
+        }
+        if (custom.matchesPerDay !== undefined && custom.matchesPerDay !== null) {
+          activeMatchesPerDay = custom.matchesPerDay;
+          isMatchesPerDayAuto = false;
+        }
+      }
+      
+      const matchLimit = isMatchesPerDayAuto ? maxPossibleMatchesPerDay : activeMatchesPerDay;
+      let matchesToday = 0;
+      let teamsPlayedToday = 0;
+      
+      // Count how many teams can play today based on restingDays
+      const availableTeams = teamLastPlayed.filter(lastDay => (day - lastDay) > activeRestingDays).length;
+      const maxTeamsToday = Math.floor(availableTeams / 2) * 2;
+      
+      matchesToday = Math.min(matchLimit, maxTeamsToday / 2);
+      matchesToday = Math.min(matchesToday, remainingMatches);
+      
+      if (matchesToday > 0) {
+        remainingMatches -= matchesToday;
+        // Update last played for the teams that played
+        let updated = 0;
+        for (let i = 0; i < teamLastPlayed.length && updated < matchesToday * 2; i++) {
+          if ((day - teamLastPlayed[i]) > activeRestingDays) {
+            teamLastPlayed[i] = day;
+            updated++;
+          }
+        }
+      }
     }
     
-    return recommendedDays;
-  }, [numberOfTeams, groups, teams, stageSettings.group.numberOfLegs, matchdaySettings.matchesPerDay, matchdaySettings.restingDays]);
+    return day || 0;
+  }, [numberOfTeams, groups, teams, stageSettings.group.numberOfLegs, matchdaySettings.matchesPerDay, matchdaySettings.customMatchdays]);
 
   useEffect(() => {
-    if (!isManualMatchdays) {
-      setMatchdaySettings(prev => ({ ...prev, numberOfMatchdays: calculatedMatchdays }));
+    setMatchdaySettings(prev => {
+      if (prev.numberOfMatchdays === calculatedMatchdays) return prev;
+      return { ...prev, numberOfMatchdays: calculatedMatchdays };
+    });
+  }, [calculatedMatchdays]);
+
+  const getInheritedDate = (dayIndex: number) => {
+    try {
+      let currentDate = new Date(settings.startDate || new Date().toISOString().split('T')[0]);
+      let currentResting = matchdaySettings.restingDays || 0;
+      
+      for (let i = 1; i <= dayIndex; i++) {
+        const custom = (matchdaySettings.customMatchdays || []).find(m => m.matchday === i);
+        if (custom?.date) {
+          currentDate = new Date(custom.date);
+        }
+        if (custom?.restingDays !== undefined && custom?.restingDays !== null) {
+          currentResting = custom.restingDays;
+        }
+        
+        // Move to next day based on current resting days
+        currentDate.setDate(currentDate.getDate() + (currentResting + 1));
+      }
+      
+      return currentDate.toISOString().split('T')[0];
+    } catch (e) {
+      return '';
     }
-  }, [calculatedMatchdays, isManualMatchdays]);
+  };
+
+  const getInheritedTime = (dayIndex: number) => {
+    let currentTime = settings.startTime || '09:00';
+    for (let i = 1; i <= dayIndex; i++) {
+      const custom = (matchdaySettings.customMatchdays || []).find(m => m.matchday === i);
+      if (custom?.time) {
+        currentTime = custom.time;
+      }
+    }
+    return currentTime;
+  };
+
+  const getInheritedMatchesPerDay = (dayIndex: number) => {
+    let current = matchdaySettings.matchesPerDay || 0;
+    for (let i = 1; i <= dayIndex; i++) {
+      const custom = (matchdaySettings.customMatchdays || []).find(m => m.matchday === i);
+      if (custom?.matchesPerDay !== undefined && custom?.matchesPerDay !== null) {
+        current = custom.matchesPerDay;
+      }
+    }
+    return current;
+  };
+
+  const getInheritedRestingDays = (dayIndex: number) => {
+    let current = matchdaySettings.restingDays || 0;
+    for (let i = 1; i <= dayIndex; i++) {
+      const custom = (matchdaySettings.customMatchdays || []).find(m => m.matchday === i);
+      if (custom?.restingDays !== undefined && custom?.restingDays !== null) {
+        current = custom.restingDays;
+      }
+    }
+    return current;
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -121,7 +206,8 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
       pitches,
       matchdaySettings: {
         ...matchdaySettings,
-        numberOfMatchdays: isManualMatchdays ? matchdaySettings.numberOfMatchdays : 0 // 0 implies auto in other parts of app, but we can also save the calculated value
+        isManual: isManualMatchdays,
+        numberOfMatchdays: isManualMatchdays ? matchdaySettings.numberOfMatchdays : calculatedMatchdays
       },
       playerSettings,
       groupStage: stageSettings.group, 
@@ -153,18 +239,21 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
   };
 
   const updateCustomMatchday = (matchday: number, field: 'date' | 'time' | 'matchesPerDay' | 'restingDays', value: string | number | undefined) => {
-    const currentCustom = [...matchdaySettings.customMatchdays];
+    const currentCustom = [...(matchdaySettings.customMatchdays || [])];
     const index = currentCustom.findIndex(m => m.matchday === matchday);
     
+    // Ensure we don't pass undefined to Firestore
+    const safeValue = value === undefined ? null : value;
+    
     if (index >= 0) {
-      currentCustom[index] = { ...currentCustom[index], [field]: value };
+      currentCustom[index] = { ...currentCustom[index], [field]: safeValue as any };
     } else {
       currentCustom.push({ 
         matchday, 
         date: field === 'date' ? value as string : '', 
-        time: field === 'time' ? value as string : undefined,
-        matchesPerDay: field === 'matchesPerDay' ? value as number : undefined,
-        restingDays: field === 'restingDays' ? value as number : undefined
+        time: field === 'time' ? value as string : null as any,
+        matchesPerDay: field === 'matchesPerDay' ? value as number : null as any,
+        restingDays: field === 'restingDays' ? value as number : null as any
       });
     }
     
@@ -172,8 +261,10 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
   };
 
   const getCustomMatchdayValue = (matchday: number, field: 'date' | 'time' | 'matchesPerDay' | 'restingDays') => {
-    const custom = matchdaySettings.customMatchdays.find(m => m.matchday === matchday);
-    return custom ? custom[field] : '';
+    const custom = (matchdaySettings.customMatchdays || []).find(m => m.matchday === matchday);
+    if (!custom) return field === 'date' ? '' : null;
+    const val = custom[field];
+    return val === undefined ? null : val;
   };
 
   // Determine how many matchdays to show in the editor
@@ -226,33 +317,53 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
                     </div>
                     <div className="grid grid-cols-2 gap-2 mb-2">
                       <div>
-                        <label className="block text-[10px] text-gray-500 mb-1">Date</label>
+                        <label className="block text-[10px] text-gray-500 mb-1">
+                          Date {getCustomMatchdayValue(day, 'date') === '' ? '(Inherited)' : ''}
+                        </label>
                         <input
                           type="date"
-                          className="w-full bg-[#0B0E14] border border-gray-700/50 rounded px-2 py-1.5 text-xs text-white focus:ring-1 focus:ring-indigo-500 outline-none"
-                          value={getCustomMatchdayValue(day, 'date') as string}
+                          className={cn(
+                            "w-full bg-[#0B0E14] border rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500 outline-none transition-colors",
+                            getCustomMatchdayValue(day, 'date') === '' 
+                              ? "border-gray-700/30 text-gray-500 italic" 
+                              : "border-gray-700/50 text-white"
+                          )}
+                          value={(getCustomMatchdayValue(day, 'date') as string) || getInheritedDate(day - 1)}
                           onChange={(e) => updateCustomMatchday(day, 'date', e.target.value)}
                         />
                       </div>
                       <div>
-                        <label className="block text-[10px] text-gray-500 mb-1">Time (Optional)</label>
+                        <label className="block text-[10px] text-gray-500 mb-1">
+                          Time {getCustomMatchdayValue(day, 'time') === null ? '(Inherited)' : ''}
+                        </label>
                         <input
                           type="time"
-                          className="w-full bg-[#0B0E14] border border-gray-700/50 rounded px-2 py-1.5 text-xs text-white focus:ring-1 focus:ring-indigo-500 outline-none"
-                          value={getCustomMatchdayValue(day, 'time') as string}
+                          className={cn(
+                            "w-full bg-[#0B0E14] border rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500 outline-none transition-colors",
+                            getCustomMatchdayValue(day, 'time') === null 
+                              ? "border-gray-700/30 text-gray-500 italic" 
+                              : "border-gray-700/50 text-white"
+                          )}
+                          value={(getCustomMatchdayValue(day, 'time') as string) || getInheritedTime(day - 1)}
                           onChange={(e) => updateCustomMatchday(day, 'time', e.target.value)}
                         />
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="block text-[10px] text-gray-500 mb-1">Matches per Day</label>
+                        <label className="block text-[10px] text-gray-500 mb-1">
+                          Matches per Day {getCustomMatchdayValue(day, 'matchesPerDay') === null ? '(Inherited)' : ''}
+                        </label>
                         <input
                           type="number"
                           min="0"
-                          placeholder="Inherit"
-                          className="w-full bg-[#0B0E14] border border-gray-700/50 rounded px-2 py-1.5 text-xs text-white focus:ring-1 focus:ring-indigo-500 outline-none"
-                          value={getCustomMatchdayValue(day, 'matchesPerDay') ?? ''}
+                          className={cn(
+                            "w-full bg-[#0B0E14] border rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500 outline-none transition-colors",
+                            getCustomMatchdayValue(day, 'matchesPerDay') === null 
+                              ? "border-gray-700/30 text-gray-500 italic" 
+                              : "border-gray-700/50 text-white"
+                          )}
+                          value={getCustomMatchdayValue(day, 'matchesPerDay') ?? getInheritedMatchesPerDay(day - 1) ?? ''}
                           onChange={(e) => {
                             const val = e.target.value === '' ? undefined : parseInt(e.target.value);
                             updateCustomMatchday(day, 'matchesPerDay', isNaN(val as number) ? undefined : (val as number));
@@ -260,13 +371,19 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
                         />
                       </div>
                       <div>
-                        <label className="block text-[10px] text-gray-500 mb-1">Resting Days</label>
+                        <label className="block text-[10px] text-gray-500 mb-1">
+                          Resting Days {getCustomMatchdayValue(day, 'restingDays') === null ? '(Inherited)' : ''}
+                        </label>
                         <input
                           type="number"
                           min="0"
-                          placeholder="Inherit"
-                          className="w-full bg-[#0B0E14] border border-gray-700/50 rounded px-2 py-1.5 text-xs text-white focus:ring-1 focus:ring-indigo-500 outline-none"
-                          value={getCustomMatchdayValue(day, 'restingDays') ?? ''}
+                          className={cn(
+                            "w-full bg-[#0B0E14] border rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500 outline-none transition-colors",
+                            getCustomMatchdayValue(day, 'restingDays') === null 
+                              ? "border-gray-700/30 text-gray-500 italic" 
+                              : "border-gray-700/50 text-white"
+                          )}
+                          value={getCustomMatchdayValue(day, 'restingDays') ?? getInheritedRestingDays(day - 1) ?? ''}
                           onChange={(e) => {
                             const val = e.target.value === '' ? undefined : parseInt(e.target.value);
                             updateCustomMatchday(day, 'restingDays', isNaN(val as number) ? undefined : (val as number));
@@ -281,9 +398,11 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
           ) : (
             <>
               <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1">Tournament Name</label>
+                <label htmlFor="tournament-name" className="block text-xs font-medium text-gray-400 mb-1">Tournament Name</label>
                 <input
                   type="text"
+                  id="tournament-name"
+                  name="tournamentName"
                   className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
                   value={tournamentName}
                   onChange={(e) => setTournamentName(e.target.value)}
@@ -293,19 +412,26 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-gray-400 mb-1">Teams</label>
+                  <label htmlFor="num-teams" className="block text-xs font-medium text-gray-400 mb-1">Teams</label>
                   <input
                     type="number"
+                    id="num-teams"
+                    name="numTeams"
                     min="2"
                     className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
                     value={numberOfTeams}
-                    onChange={(e) => setNumberOfTeams(parseInt(e.target.value))}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value);
+                      setNumberOfTeams(isNaN(val) ? 0 : val);
+                    }}
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-400 mb-1">Pitches</label>
+                  <label htmlFor="num-pitches" className="block text-xs font-medium text-gray-400 mb-1">Pitches</label>
                   <input
                     type="number"
+                    id="num-pitches"
+                    name="numPitches"
                     min="1"
                     className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
                     value={numberOfPitches}
@@ -321,6 +447,8 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
                     <input
                       key={pitch.id}
                       type="text"
+                      id={`pitch-name-${i}`}
+                      name={`pitchName${i}`}
                       className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
                       value={pitch.name}
                       onChange={(e) => updatePitch(i, e.target.value)}
@@ -355,6 +483,8 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
                     {isManualMatchdays ? (
                       <input
                         type="number"
+                        id="manual-matchdays"
+                        name="manualMatchdays"
                         min="1"
                         className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
                         value={matchdaySettings.numberOfMatchdays}
@@ -368,9 +498,11 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
 
                     <div className="grid grid-cols-2 gap-3 mt-3">
                       <div>
-                        <label className="block text-[10px] text-gray-500 mb-1">Matches per Day</label>
+                        <label htmlFor="matches-per-day" className="block text-[10px] text-gray-500 mb-1">Matches per Day</label>
                         <input
                           type="number"
+                          id="matches-per-day"
+                          name="matchesPerDay"
                           min="0"
                           placeholder="Auto"
                           className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-lg px-2 py-1.5 text-xs text-white focus:ring-1 focus:ring-indigo-500 outline-none"
@@ -379,9 +511,11 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
                         />
                       </div>
                       <div>
-                        <label className="block text-[10px] text-gray-500 mb-1">Resting Days</label>
+                        <label htmlFor="resting-days" className="block text-[10px] text-gray-500 mb-1">Resting Days</label>
                         <input
                           type="number"
+                          id="resting-days"
+                          name="restingDays"
                           min="0"
                           className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-lg px-2 py-1.5 text-xs text-white focus:ring-1 focus:ring-indigo-500 outline-none"
                           value={matchdaySettings.restingDays || 0}
@@ -433,9 +567,11 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
 
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs font-medium text-gray-400 mb-1">Number of Winners</label>
+                    <label htmlFor="winners-count" className="block text-xs font-medium text-gray-400 mb-1">Number of Winners</label>
                     <input
                       type="number"
+                      id="winners-count"
+                      name="winnersCount"
                       min="1"
                       className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
                       value={stageSettings[activeStage].numberOfWinners}
@@ -476,9 +612,11 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
                 <div className="space-y-3">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[10px] text-gray-500 mb-1">Max Players per Team</label>
+                      <label htmlFor="max-players" className="block text-[10px] text-gray-500 mb-1">Max Players per Team</label>
                       <input
                         type="number"
+                        id="max-players"
+                        name="maxPlayers"
                         min="1"
                         className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
                         value={playerSettings.maxPlayersPerTeam}
@@ -486,9 +624,11 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] text-gray-500 mb-1">Active Players per Side</label>
+                      <label htmlFor="active-players" className="block text-[10px] text-gray-500 mb-1">Active Players per Side</label>
                       <input
                         type="number"
+                        id="active-players"
+                        name="activePlayers"
                         min="1"
                         className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
                         value={playerSettings.activePlayersPerSide}
@@ -497,9 +637,11 @@ export function TournamentManagementModal({ settings, teams = [], groups = [], t
                     </div>
                   </div>
                   <div>
-                    <label className="block text-[10px] text-gray-500 mb-1">Max Substitutes</label>
+                    <label htmlFor="max-subs" className="block text-[10px] text-gray-500 mb-1">Max Substitutes</label>
                     <input
                       type="number"
+                      id="max-subs"
+                      name="maxSubs"
                       min="0"
                       className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
                       value={playerSettings.maxSubs}

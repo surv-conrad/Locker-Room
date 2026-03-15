@@ -11,6 +11,7 @@ interface SettingsModalProps {
 export function SettingsModal({ settings, onSave, onClose }: SettingsModalProps) {
   const [logoUrl, setLogoUrl] = useState(settings.logoUrl);
   const [startDate, setStartDate] = useState(settings.startDate);
+  const [startTime, setStartTime] = useState(settings.startTime || '09:00');
   const [tournamentName, setTournamentName] = useState(settings.tournamentName || '');
   const [description, setDescription] = useState(settings.description || '');
   const [tieBreaker, setTieBreaker] = useState(settings.tieBreaker || 'goalDifference');
@@ -23,6 +24,7 @@ export function SettingsModal({ settings, onSave, onClose }: SettingsModalProps)
       ...settings, 
       logoUrl, 
       startDate, 
+      startTime,
       tournamentName,
       description,
       tieBreaker,
@@ -56,8 +58,10 @@ export function SettingsModal({ settings, onSave, onClose }: SettingsModalProps)
         
         <form onSubmit={handleSubmit} className="p-6 space-y-6 overflow-y-auto flex-1">
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Tournament Name</label>
+            <label htmlFor="tournamentName" className="block text-sm font-medium text-gray-300 mb-2">Tournament Name</label>
             <input
+              id="tournamentName"
+              name="tournamentName"
               type="text"
               className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
               value={tournamentName}
@@ -67,8 +71,10 @@ export function SettingsModal({ settings, onSave, onClose }: SettingsModalProps)
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Description</label>
+            <label htmlFor="description" className="block text-sm font-medium text-gray-300 mb-2">Description</label>
             <textarea
+              id="description"
+              name="description"
               className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -78,7 +84,7 @@ export function SettingsModal({ settings, onSave, onClose }: SettingsModalProps)
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center gap-2">
+            <label htmlFor="logoUrl" className="block text-sm font-medium text-gray-300 mb-2 flex items-center gap-2">
               <ImageIcon className="w-4 h-4" /> Tournament Logo
             </label>
             
@@ -98,6 +104,8 @@ export function SettingsModal({ settings, onSave, onClose }: SettingsModalProps)
                   <Upload className="w-4 h-4" /> Upload Image
                 </button>
                 <input
+                  id="logoFile"
+                  name="logoFile"
                   type="file"
                   ref={fileInputRef}
                   onChange={handleImageUpload}
@@ -113,6 +121,8 @@ export function SettingsModal({ settings, onSave, onClose }: SettingsModalProps)
               </div>
 
               <input
+                id="logoUrl"
+                name="logoUrl"
                 type="url"
                 className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-sm shadow-inner"
                 value={logoUrl}
@@ -123,8 +133,10 @@ export function SettingsModal({ settings, onSave, onClose }: SettingsModalProps)
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Tie-Breaker Rule</label>
+            <label htmlFor="tieBreaker" className="block text-sm font-medium text-gray-300 mb-2">Tie-Breaker Rule</label>
             <select
+              id="tieBreaker"
+              name="tieBreaker"
               className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-sm shadow-inner"
               value={tieBreaker}
               onChange={(e) => setTieBreaker(e.target.value as any)}
@@ -136,8 +148,10 @@ export function SettingsModal({ settings, onSave, onClose }: SettingsModalProps)
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Primary Color</label>
+            <label htmlFor="primaryColor" className="block text-sm font-medium text-gray-300 mb-2">Primary Color</label>
             <input
+              id="primaryColor"
+              name="primaryColor"
               type="color"
               className="w-full h-10 bg-[#1A1D24]/50 border border-gray-700/50 rounded-xl px-2 py-1 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
               value={primaryColor}
@@ -145,15 +159,31 @@ export function SettingsModal({ settings, onSave, onClose }: SettingsModalProps)
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Tournament Start Date</label>
-            <input
-              type="date"
-              className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              required
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="startDate" className="block text-sm font-medium text-gray-300 mb-2">Tournament Start Date</label>
+              <input
+                id="startDate"
+                name="startDate"
+                type="date"
+                className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <label htmlFor="startTime" className="block text-sm font-medium text-gray-300 mb-2">Default Start Time</label>
+              <input
+                id="startTime"
+                name="startTime"
+                type="time"
+                className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                required
+              />
+            </div>
           </div>
 
           <div className="pt-4 flex gap-3">

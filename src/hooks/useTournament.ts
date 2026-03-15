@@ -28,18 +28,79 @@ export function useTournament(publicTournamentId?: string) {
   const [userRole, setUserRole] = useState<'admin' | 'viewer' | null>(null);
   const [allUsers, setAllUsers] = useState<{uid: string, email: string, role: string}[]>([]);
 
+  enum OperationType {
+    CREATE = 'create',
+    UPDATE = 'update',
+    DELETE = 'delete',
+    LIST = 'list',
+    GET = 'get',
+    WRITE = 'write',
+  }
+
+  interface FirestoreErrorInfo {
+    error: string;
+    operationType: OperationType;
+    path: string | null;
+    authInfo: {
+      userId: string | undefined;
+      email: string | null | undefined;
+      emailVerified: boolean | undefined;
+      isAnonymous: boolean | undefined;
+      tenantId: string | null | undefined;
+      providerInfo: {
+        providerId: string;
+        displayName: string | null;
+        email: string | null;
+        photoUrl: string | null;
+      }[];
+    }
+  }
+
+  const handleFirestoreError = (error: unknown, operationType: OperationType, path: string | null) => {
+    const errInfo: FirestoreErrorInfo = {
+      error: error instanceof Error ? error.message : String(error),
+      authInfo: {
+        userId: auth.currentUser?.uid,
+        email: auth.currentUser?.email,
+        emailVerified: auth.currentUser?.emailVerified,
+        isAnonymous: auth.currentUser?.isAnonymous,
+        tenantId: auth.currentUser?.tenantId,
+        providerInfo: auth.currentUser?.providerData.map(provider => ({
+          providerId: provider.providerId,
+          displayName: provider.displayName,
+          email: provider.email,
+          photoUrl: provider.photoURL
+        })) || []
+      },
+      operationType,
+      path
+    };
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+    throw new Error(JSON.stringify(errInfo));
+  };
+
   const isAdmin = userRole === 'admin';
   const isSuperAdmin = auth?.currentUser?.email === 'conradenock@gmail.com';
 
   const setSettings = async (newSettings: Settings | ((prev: Settings) => Settings)) => {
     if (!userId || !isAdmin) return;
     const updated = typeof newSettings === 'function' ? newSettings(settings) : newSettings;
-    await setDoc(doc(db, `users/${userId}/settings/current`), { ...updated, userId });
+    const path = `users/${userId}/settings/current`;
+    try {
+      await setDoc(doc(db, path), { ...updated, userId });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
   };
 
   const updateUserRole = async (targetUserId: string, role: 'admin' | 'viewer') => {
     if (!userId || !isSuperAdmin) return;
-    await setDoc(doc(db, 'users', targetUserId), { role }, { merge: true });
+    const path = `users/${targetUserId}`;
+    try {
+      await setDoc(doc(db, path), { role }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
   };
 
   useEffect(() => {
@@ -64,14 +125,18 @@ export function useTournament(publicTournamentId?: string) {
       if (user) {
         // Initialize user profile if it doesn't exist
         const userRef = doc(db, 'users', user.uid);
-        const userSnap = await getDocFromServer(userRef);
-        if (!userSnap.exists()) {
-          await setDoc(userRef, {
-            uid: user.uid,
-            email: user.email,
-            displayName: user.displayName,
-            role: 'viewer'
-          });
+        try {
+          const userSnap = await getDocFromServer(userRef);
+          if (!userSnap.exists()) {
+            await setDoc(userRef, {
+              uid: user.uid,
+              email: user.email,
+              name: user.displayName || 'User',
+              role: 'viewer'
+            });
+          }
+        } catch (error) {
+          console.error("Error initializing user profile:", error);
         }
       } else {
         setTeams([]);
@@ -120,7 +185,11 @@ export function useTournament(publicTournamentId?: string) {
     });
 
     const unsubFixtures = onSnapshot(collection(db, `users/${userId}/fixtures`), (snapshot) => {
-      setFixtures(snapshot.docs.map(doc => doc.data() as Fixture));
+      const f = snapshot.docs.map(doc => doc.data() as Fixture);
+      setFixtures(f.sort((a, b) => {
+        if (a.matchday !== b.matchday) return a.matchday - b.matchday;
+        return (a.order || 0) - (b.order || 0);
+      }));
     });
 
     const unsubSettings = onSnapshot(doc(db, `users/${userId}/settings/current`), (snapshot) => {
@@ -146,25 +215,40 @@ export function useTournament(publicTournamentId?: string) {
   const addTeam = async (team: Omit<Team, 'id' | 'players'>) => {
     if (!userId || !isAdmin) return;
     const id = generateId();
-    await setDoc(doc(db, `users/${userId}/teams`, id), { ...team, id, players: [], userId });
+    const path = `users/${userId}/teams/${id}`;
+    try {
+      await setDoc(doc(db, path), { ...team, id, players: [], userId });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
   };
 
   const editTeam = async (id: string, updatedTeam: Partial<Team>) => {
     if (!userId || !isAdmin) return;
-    await setDoc(doc(db, `users/${userId}/teams`, id), { ...updatedTeam }, { merge: true });
+    const path = `users/${userId}/teams/${id}`;
+    try {
+      await setDoc(doc(db, path), { ...updatedTeam }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
   };
 
   const deleteTeam = async (id: string) => {
     if (!userId || !isAdmin) return;
-    await deleteDoc(doc(db, `users/${userId}/teams`, id));
-    // Clear fixtures if teams change - in a real app we might want to be more selective
-    const batch = writeBatch(db);
-    fixtures.forEach(f => {
-      if (f.homeTeamId === id || f.awayTeamId === id) {
-        batch.delete(doc(db, `users/${userId}/fixtures`, f.id));
-      }
-    });
-    await batch.commit();
+    const path = `users/${userId}/teams/${id}`;
+    try {
+      await deleteDoc(doc(db, path));
+      // Clear fixtures if teams change - in a real app we might want to be more selective
+      const batch = writeBatch(db);
+      fixtures.forEach(f => {
+        if (f.homeTeamId === id || f.awayTeamId === id) {
+          batch.delete(doc(db, `users/${userId}/fixtures`, f.id));
+        }
+      });
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    }
   };
 
   const reorderTeams = async (newTeams: Team[]) => {
@@ -176,30 +260,104 @@ export function useTournament(publicTournamentId?: string) {
 
   const reorderFixtures = async (matchday: number, newFixtures: Fixture[]) => {
     if (!userId || !isAdmin) return;
-    // Similar to teams, we'd need an order field for persistence
+    
+    // Update local state first for responsiveness
     setFixtures(prev => {
       const otherFixtures = prev.filter(f => f.matchday !== matchday);
-      return [...otherFixtures, ...newFixtures];
+      return [...otherFixtures, ...newFixtures.map((f, i) => ({ ...f, order: i }))];
     });
+
+    // Persist to Firestore
+    try {
+      const batch = writeBatch(db);
+      newFixtures.forEach((f, i) => {
+        batch.update(doc(db, `users/${userId}/fixtures`, f.id), { order: i });
+      });
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/fixtures`);
+    }
+  };
+
+  const moveFixture = async (fixture: Fixture, targetMatchday: number, targetOrder: number) => {
+    if (!userId || !isAdmin) return;
+
+    // Update local state
+    setFixtures(prev => {
+      // 1. Remove fixture from its current position
+      const others = prev.filter(f => f.id !== fixture.id);
+      
+      // 2. Insert fixture at target position
+      const updated = [...others, { ...fixture, matchday: targetMatchday, order: targetOrder }];
+      
+      // 3. Reorder all fixtures to ensure contiguous orders
+      const matchdays = Array.from(new Set(updated.map(f => f.matchday))).sort((a, b) => a - b);
+      const reordered = matchdays.flatMap(day => {
+        const dayFixtures = updated.filter(f => f.matchday === day).sort((a, b) => (a.order || 0) - (b.order || 0));
+        return dayFixtures.map((f, i) => ({ ...f, order: i }));
+      });
+      
+      return reordered;
+    });
+
+    // Persist to Firestore
+    try {
+      const batch = writeBatch(db);
+      // Update all fixtures in the affected matchdays
+      const affectedMatchdays = new Set([fixture.matchday, targetMatchday]);
+      
+      // We need to fetch the updated state from the setFixtures callback, 
+      // but setFixtures is async/state-based.
+      // Let's rethink: we can calculate the reordered fixtures first, then update.
+      
+      // Re-calculate the reordered fixtures based on the change
+      const others = fixtures.filter(f => f.id !== fixture.id);
+      const updated = [...others, { ...fixture, matchday: targetMatchday, order: targetOrder }];
+      const matchdays = Array.from(new Set(updated.map(f => f.matchday))).sort((a, b) => a - b);
+      const reordered = matchdays.flatMap(day => {
+        const dayFixtures = updated.filter(f => f.matchday === day).sort((a, b) => (a.order || 0) - (b.order || 0));
+        return dayFixtures.map((f, i) => ({ ...f, order: i }));
+      });
+      
+      // Update all fixtures in the batch
+      reordered.forEach(f => {
+        batch.update(doc(db, `users/${userId}/fixtures`, f.id), { matchday: f.matchday, order: f.order });
+      });
+      
+      await batch.commit();
+      setFixtures(reordered);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/fixtures`);
+    }
   };
 
   const addGroup = async (name: string) => {
     if (!userId || !isAdmin) return;
     const id = generateId();
-    await setDoc(doc(db, `users/${userId}/groups`, id), { id, name, userId });
+    const path = `users/${userId}/groups/${id}`;
+    try {
+      await setDoc(doc(db, path), { id, name, userId });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
   };
 
   const deleteGroup = async (id: string) => {
     if (!userId || !isAdmin) return;
-    await deleteDoc(doc(db, `users/${userId}/groups`, id));
-    
-    const batch = writeBatch(db);
-    teams.forEach(t => {
-      if (t.groupId === id) {
-        batch.update(doc(db, `users/${userId}/teams`, t.id), { groupId: null });
-      }
-    });
-    await batch.commit();
+    const path = `users/${userId}/groups/${id}`;
+    try {
+      await deleteDoc(doc(db, path));
+      
+      const batch = writeBatch(db);
+      teams.forEach(t => {
+        if (t.groupId === id) {
+          batch.update(doc(db, `users/${userId}/teams`, t.id), { groupId: null });
+        }
+      });
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    }
   };
 
   // Helper functions for scheduling
@@ -212,20 +370,52 @@ export function useTournament(publicTournamentId?: string) {
     }
   };
   
-  const getDateForMatchday = (matchdayIndex: number) => {
-    const customMatchday = settings.matchdaySettings?.customMatchdays?.find(m => m.matchday === matchdayIndex + 1);
-    if (customMatchday && customMatchday.date) {
-      return customMatchday.date;
+  const getDateForMatchday = (matchdayIndex: number, overrideSettings?: Settings) => {
+    const activeSettings = overrideSettings || settings;
+    const matchday = matchdayIndex + 1;
+    
+    let currentDate = new Date(activeSettings.startDate || new Date().toISOString().split('T')[0]);
+    let currentResting = activeSettings.matchdaySettings?.restingDays || 0;
+    
+    for (let i = 1; i <= matchday; i++) {
+      const custom = activeSettings.matchdaySettings?.customMatchdays?.find(m => m.matchday === i);
+      
+      // If this is the target day and it has a custom date, return it
+      if (i === matchday && custom?.date) {
+        return custom.date;
+      }
+      
+      // If we found a custom date for a previous day, update our tracker
+      if (custom?.date) {
+        currentDate = new Date(custom.date);
+      }
+      
+      // Update resting days if custom exists
+      if (custom?.restingDays !== undefined && custom?.restingDays !== null) {
+        currentResting = custom.restingDays;
+      }
+      
+      // If we are not at the target day yet, move to the next day
+      if (i < matchday) {
+        currentDate.setDate(currentDate.getDate() + (currentResting + 1));
+      }
     }
     
-    const startDate = new Date(settings.startDate);
-    startDate.setDate(startDate.getDate() + (matchdayIndex * 7)); // Weekly matches by default
-    return formatDate(startDate);
+    return formatDate(currentDate);
   };
 
-  const getTimeForMatchday = (matchdayIndex: number) => {
-    const customMatchday = settings.matchdaySettings?.customMatchdays?.find(m => m.matchday === matchdayIndex + 1);
-    return customMatchday?.time;
+  const getTimeForMatchday = (matchdayIndex: number, overrideSettings?: Settings) => {
+    const activeSettings = overrideSettings || settings;
+    const matchday = matchdayIndex + 1;
+    
+    let currentTime = activeSettings.startTime || '09:00';
+    for (let i = 1; i <= matchday; i++) {
+      const custom = activeSettings.matchdaySettings?.customMatchdays?.find(m => m.matchday === i);
+      if (custom?.time) {
+        currentTime = custom.time;
+      }
+    }
+    return currentTime;
   };
 
   const addMinutes = (time: string, minutes: number) => {
@@ -303,7 +493,7 @@ export function useTournament(publicTournamentId?: string) {
     if (teams.length < 2 || !userId || !isAdmin) return;
 
     let newFixtures: Fixture[] = [];
-    const pitches = settings.pitches || [{ id: 'pitch-1', name: 'Pitch 1' }];
+    const pitches = settings.pitches && settings.pitches.length > 0 ? settings.pitches : [{ id: 'pitch-1', name: 'Pitch 1' }];
 
     // Helper to generate round robin fixtures
     const generateRoundRobin = (teams: Team[], numberOfLegs: number) => {
@@ -368,13 +558,21 @@ export function useTournament(publicTournamentId?: string) {
       // Track current active settings
       let activeRestingDays = globalRestingDays;
       let activeMatchesPerDay = globalMatchesPerDay;
+      let isMatchesPerDayAuto = globalMatchesPerDay === 0;
 
       while (queue.length > 0) {
         // Update active settings if custom ones exist for this day
         const customSettings = settings.matchdaySettings?.customMatchdays?.find(m => m.matchday === currentMatchday);
+        
+        // Inherit from previous day (which starts as global default), then override with custom if exists
         if (customSettings) {
-          if (customSettings.restingDays !== undefined) activeRestingDays = customSettings.restingDays;
-          if (customSettings.matchesPerDay !== undefined) activeMatchesPerDay = customSettings.matchesPerDay;
+          if (customSettings.restingDays !== null && customSettings.restingDays !== undefined) {
+            activeRestingDays = customSettings.restingDays;
+          }
+          if (customSettings.matchesPerDay !== null && customSettings.matchesPerDay !== undefined) {
+            activeMatchesPerDay = customSettings.matchesPerDay;
+            isMatchesPerDayAuto = false;
+          }
         }
 
         let matchesToday = 0;
@@ -383,12 +581,10 @@ export function useTournament(publicTournamentId?: string) {
         let scheduledAnyToday = false;
         
         // Try to find matches for today
-        // Pass 1: Try to schedule one match per group
-        for (let i = 0; i < queue.length; i++) {
-          if (activeMatchesPerDay > 0 && matchesToday >= activeMatchesPerDay) break;
-          
-          const match = queue[i];
-          if (match.groupId && groupsPlayingToday.has(match.groupId)) continue;
+        
+        // Helper function to try scheduling a match
+        const tryScheduleMatch = (match: Fixture, index: number, respectGroupConstraint: boolean): boolean => {
+          if (respectGroupConstraint && match.groupId && groupsPlayingToday.has(match.groupId)) return false;
 
           const homeId = match.homeTeamId;
           const awayId = match.awayTeamId;
@@ -406,9 +602,9 @@ export function useTournament(publicTournamentId?: string) {
           
           if (homeCanPlay && awayCanPlay && homeNotPlayingToday && awayNotPlayingToday) {
             match.matchday = currentMatchday;
+            match.order = matchesToday;
             scheduled.push(match);
-            queue.splice(i, 1);
-            i--; // Adjust index after splice
+            queue.splice(index, 1);
             
             matchesToday++;
             teamsPlayingToday.add(homeId);
@@ -417,41 +613,30 @@ export function useTournament(publicTournamentId?: string) {
             teamLastPlayedOn.set(homeId, currentMatchday);
             teamLastPlayedOn.set(awayId, currentMatchday);
             scheduledAnyToday = true;
+            return true;
+          }
+          return false;
+        };
+
+        // Pass 1: Try to schedule one match from each group
+        const groups = Array.from(new Set(queue.map(f => f.groupId).filter(Boolean) as string[]));
+        for (const groupId of groups) {
+          if (!isMatchesPerDayAuto && matchesToday >= activeMatchesPerDay) break;
+          
+          // Find the first match for this group
+          const matchIndex = queue.findIndex(f => f.groupId === groupId);
+          if (matchIndex !== -1) {
+            tryScheduleMatch(queue[matchIndex], matchIndex, true);
           }
         }
 
-        // Pass 2: Fill remaining slots if any
-        for (let i = 0; i < queue.length; i++) {
-          if (activeMatchesPerDay > 0 && matchesToday >= activeMatchesPerDay) break;
-          
-          const match = queue[i];
-          const homeId = match.homeTeamId;
-          const awayId = match.awayTeamId;
-          
-          // Check restingDays constraint
-          const homeLastPlayed = teamLastPlayedOn.get(homeId) ?? -1000;
-          const awayLastPlayed = teamLastPlayedOn.get(awayId) ?? -1000;
-          
-          const homeCanPlay = (currentMatchday - homeLastPlayed) > activeRestingDays;
-          const awayCanPlay = (currentMatchday - awayLastPlayed) > activeRestingDays;
-          
-          // Check if teams already playing today
-          const homeNotPlayingToday = !teamsPlayingToday.has(homeId);
-          const awayNotPlayingToday = !teamsPlayingToday.has(awayId);
-          
-          if (homeCanPlay && awayCanPlay && homeNotPlayingToday && awayNotPlayingToday) {
-            match.matchday = currentMatchday;
-            scheduled.push(match);
-            queue.splice(i, 1);
-            i--; // Adjust index after splice
-            
-            matchesToday++;
-            teamsPlayingToday.add(homeId);
-            teamsPlayingToday.add(awayId);
-            if (match.groupId) groupsPlayingToday.add(match.groupId);
-            teamLastPlayedOn.set(homeId, currentMatchday);
-            teamLastPlayedOn.set(awayId, currentMatchday);
-            scheduledAnyToday = true;
+        // Pass 2: If space remains, try to schedule matches ignoring group constraint
+        if (isMatchesPerDayAuto || matchesToday < activeMatchesPerDay) {
+          for (let i = 0; i < queue.length; i++) {
+            if (!isMatchesPerDayAuto && matchesToday >= activeMatchesPerDay) break;
+            if (tryScheduleMatch(queue[i], i, false)) {
+              i--; // Adjust index after splice
+            }
           }
         }
         
@@ -510,27 +695,49 @@ export function useTournament(publicTournamentId?: string) {
       scheduleMatchdayMatches(dayFixtures, pitches, startTime || '09:00');
     });
 
-    // Update settings if matchdays changed due to constraints
-    const maxMatchday = newFixtures.reduce((max, f) => Math.max(max, f.matchday), 0);
-    if (maxMatchday > 0 && (!settings.matchdaySettings?.numberOfMatchdays || settings.matchdaySettings.numberOfMatchdays < maxMatchday)) {
-      await setSettings(prev => ({
-        ...prev,
-        matchdaySettings: {
-          ...prev.matchdaySettings!,
-          numberOfMatchdays: maxMatchday
-        }
-      }));
-    }
+    try {
+      // Update settings if matchdays changed due to constraints
+      const maxMatchday = newFixtures.reduce((max, f) => Math.max(max, f.matchday), 0);
+      if (maxMatchday > 0 && maxMatchday !== settings.matchdaySettings?.numberOfMatchdays) {
+        await setSettings(prev => ({
+          ...prev,
+          matchdaySettings: {
+            ...(prev.matchdaySettings || { numberOfMatchdays: 0, customMatchdays: [] }),
+            numberOfMatchdays: maxMatchday
+          }
+        }));
+      }
 
-    const batch = writeBatch(db);
-    // Clear old fixtures first? Usually generateFixtures is a "reset" action
-    fixtures.forEach(f => {
-      batch.delete(doc(db, `users/${userId}/fixtures`, f.id));
-    });
-    newFixtures.forEach(f => {
-      batch.set(doc(db, `users/${userId}/fixtures`, f.id), { ...f, userId });
-    });
-    await batch.commit();
+      const batches = [];
+      let currentBatch = writeBatch(db);
+      let operationCount = 0;
+
+      const commitCurrentBatch = () => {
+        batches.push(currentBatch.commit());
+        currentBatch = writeBatch(db);
+        operationCount = 0;
+      };
+
+      // Clear old fixtures first? Usually generateFixtures is a "reset" action
+      fixtures.forEach(f => {
+        currentBatch.delete(doc(db, `users/${userId}/fixtures`, f.id));
+        operationCount++;
+        if (operationCount === 500) commitCurrentBatch();
+      });
+      newFixtures.forEach(f => {
+        currentBatch.set(doc(db, `users/${userId}/fixtures`, f.id), { ...f, userId });
+        operationCount++;
+        if (operationCount === 500) commitCurrentBatch();
+      });
+      
+      if (operationCount > 0) {
+        batches.push(currentBatch.commit());
+      }
+      
+      await Promise.all(batches);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/fixtures`);
+    }
   };
 
   const fillAllTeamSheetsWithTestData = async () => {
@@ -542,35 +749,39 @@ export function useTournament(publicTournamentId?: string) {
     const maxPlayers = settings.playerSettings?.maxPlayersPerTeam || 15;
     const activePerSide = settings.playerSettings?.activePlayersPerSide || 7;
 
-    const batch = writeBatch(db);
-    teams.forEach(team => {
-      const players = [];
-      const minToGen = Math.min(activePerSide + 2, maxPlayers);
-      const numPlayers = Math.floor(Math.random() * (maxPlayers - minToGen + 1)) + minToGen;
-      
-      for (let i = 0; i < numPlayers; i++) {
-        const firstName = firstNames[Math.floor(Math.random() * firstNames.length)];
-        const lastName = lastNames[Math.floor(Math.random() * lastNames.length)];
-        const isActive = i < activePerSide;
-        const position = positions[Math.floor(Math.random() * positions.length)];
-        players.push({
-          id: generateId(),
-          name: `${firstName} ${lastName}`,
-          number: (i + 1).toString(),
-          position,
-          isCaptain: i === 0,
-          isViceCaptain: i === 1,
-          isActive,
-          photoUrl: `https://i.pravatar.cc/150?u=${generateId()}`,
-          pitchPosition: isActive ? { 
-            x: position === 'GK' ? 50 : position === 'DF' ? 20 + (i % 3) * 30 : position === 'MF' ? 20 + (i % 3) * 30 : 50, 
-            y: position === 'GK' ? 90 : position === 'DF' ? 75 : position === 'MF' ? 50 : 25 
-          } : undefined
-        });
-      }
-      batch.update(doc(db, `users/${userId}/teams`, team.id), { players });
-    });
-    await batch.commit();
+    try {
+      const batch = writeBatch(db);
+      teams.forEach(team => {
+        const players = [];
+        const minToGen = Math.min(activePerSide + 2, maxPlayers);
+        const numPlayers = Math.floor(Math.random() * (maxPlayers - minToGen + 1)) + minToGen;
+        
+        for (let i = 0; i < numPlayers; i++) {
+          const firstName = firstNames[Math.floor(Math.random() * firstNames.length)];
+          const lastName = lastNames[Math.floor(Math.random() * lastNames.length)];
+          const isActive = i < activePerSide;
+          const position = positions[Math.floor(Math.random() * positions.length)];
+          players.push({
+            id: generateId(),
+            name: `${firstName} ${lastName}`,
+            number: (i + 1).toString(),
+            position,
+            isCaptain: i === 0,
+            isViceCaptain: i === 1,
+            isActive,
+            photoUrl: `https://i.pravatar.cc/150?u=${generateId()}`,
+            pitchPosition: isActive ? { 
+              x: position === 'GK' ? 50 : position === 'DF' ? 20 + (i % 3) * 30 : position === 'MF' ? 20 + (i % 3) * 30 : 50, 
+              y: position === 'GK' ? 90 : position === 'DF' ? 75 : position === 'MF' ? 50 : 25 
+            } : undefined
+          });
+        }
+        batch.update(doc(db, `users/${userId}/teams`, team.id), { players });
+      });
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/teams`);
+    }
   };
 
   const generateKnockoutFixtures = async () => {
@@ -614,11 +825,15 @@ export function useTournament(publicTournamentId?: string) {
         }
       }
       
-      const batch = writeBatch(db);
-      newFixtures.forEach(f => {
-        batch.set(doc(db, `users/${userId}/fixtures`, f.id), { ...f, userId });
-      });
-      await batch.commit();
+      try {
+        const batch = writeBatch(db);
+        newFixtures.forEach(f => {
+          batch.set(doc(db, `users/${userId}/fixtures`, f.id), { ...f, userId });
+        });
+        await batch.commit();
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, `users/${userId}/fixtures`);
+      }
       return;
     }
 
@@ -683,11 +898,15 @@ export function useTournament(publicTournamentId?: string) {
       }
     }
 
-    const batch = writeBatch(db);
-    newFixtures.forEach(f => {
-      batch.set(doc(db, `users/${userId}/fixtures`, f.id), { ...f, userId });
-    });
-    await batch.commit();
+    try {
+      const batch = writeBatch(db);
+      newFixtures.forEach(f => {
+        batch.set(doc(db, `users/${userId}/fixtures`, f.id), { ...f, userId });
+      });
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/fixtures`);
+    }
   };
 
   const createKnockoutFixture = (homeId: string, awayId: string, matchday: number, pitchId: string, date: string): Fixture => {
@@ -707,112 +926,131 @@ export function useTournament(publicTournamentId?: string) {
 
   const updateFixture = async (id: string, homeScore: number | null, awayScore: number | null) => {
     if (!userId || !isAdmin) return;
-    await setDoc(doc(db, `users/${userId}/fixtures`, id), { homeScore, awayScore }, { merge: true });
+    const path = `users/${userId}/fixtures/${id}`;
+    try {
+      await setDoc(doc(db, path), { homeScore, awayScore }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
   };
 
   const updateFixtureDetails = async (id: string, details: Partial<Pick<Fixture, 'date' | 'time' | 'pitchId' | 'matchday'>>) => {
     if (!userId || !isAdmin) return;
-    // We need the full fixture to perform the conflict check logic if we want to keep it
-    // But for simplicity, let's just update the fields. 
-    // If we want to keep the "auto-reassign" logic, it's better to do it locally then write.
-    
-    let updatedFixtures = fixtures.map(f => f.id === id ? { ...f, ...details } : f);
-    const targetFixture = updatedFixtures.find(f => f.id === id);
+    const path = `users/${userId}/fixtures/${id}`;
+    try {
+      // We need the full fixture to perform the conflict check logic if we want to keep it
+      // But for simplicity, let's just update the fields. 
+      // If we want to keep the "auto-reassign" logic, it's better to do it locally then write.
+      
+      let updatedFixtures = fixtures.map(f => f.id === id ? { ...f, ...details } : f);
+      const targetFixture = updatedFixtures.find(f => f.id === id);
 
-    if (targetFixture && (details.time || details.date || details.pitchId)) {
-      const pitches = settings.pitches || [{ id: 'pitch-1', name: 'Pitch 1' }];
+      if (targetFixture && (details.time || details.date || details.pitchId)) {
+        const pitches = settings.pitches || [{ id: 'pitch-1', name: 'Pitch 1' }];
 
-      // 1. Check for Time/Pitch Conflict (Two matches at same time on same pitch)
-      const timePitchConflict = updatedFixtures.find(f => 
-        f.id !== id && 
-        f.date === targetFixture.date && 
-        f.time === targetFixture.time && 
-        f.pitchId === targetFixture.pitchId
-      );
-
-      // 2. Check for Group/Pitch/Day Conflict (Two matches from same group on same pitch on same day)
-      let groupPitchConflict = undefined;
-      if (targetFixture.groupId) {
-        groupPitchConflict = updatedFixtures.find(f => 
-          f.id !== id &&
-          f.groupId === targetFixture.groupId &&
-          f.date === targetFixture.date &&
+        // 1. Check for Time/Pitch Conflict (Two matches at same time on same pitch)
+        const timePitchConflict = updatedFixtures.find(f => 
+          f.id !== id && 
+          f.date === targetFixture.date && 
+          f.time === targetFixture.time && 
           f.pitchId === targetFixture.pitchId
         );
-      }
 
-      if (timePitchConflict || groupPitchConflict) {
-        // Get all pitches used at this specific time
-        const pitchesOccupiedAtTime = new Set(
-          updatedFixtures
-            .filter(f => f.id !== id && f.date === targetFixture.date && f.time === targetFixture.time)
-            .map(f => f.pitchId)
-        );
-
-        // Get all pitches used by this group on this day
-        const pitchesUsedByGroupToday = new Set<string>();
+        // 2. Check for Group/Pitch/Day Conflict (Two matches from same group on same pitch on same day)
+        let groupPitchConflict = undefined;
         if (targetFixture.groupId) {
-          updatedFixtures
-            .filter(f => f.id !== id && f.groupId === targetFixture.groupId && f.date === targetFixture.date)
-            .forEach(f => {
-              if (f.pitchId) pitchesUsedByGroupToday.add(f.pitchId);
-            });
+          groupPitchConflict = updatedFixtures.find(f => 
+            f.id !== id &&
+            f.groupId === targetFixture.groupId &&
+            f.date === targetFixture.date &&
+            f.pitchId === targetFixture.pitchId
+          );
         }
 
-        // Find a pitch that is NOT in either set
-        const availablePitch = pitches.find(p => 
-          !pitchesOccupiedAtTime.has(p.id) && 
-          !pitchesUsedByGroupToday.has(p.id)
-        );
+        if (timePitchConflict || groupPitchConflict) {
+          // Get all pitches used at this specific time
+          const pitchesOccupiedAtTime = new Set(
+            updatedFixtures
+              .filter(f => f.id !== id && f.date === targetFixture.date && f.time === targetFixture.time)
+              .map(f => f.pitchId)
+          );
 
-        if (availablePitch) {
-          // Reassign target to available pitch
-          await setDoc(doc(db, `users/${userId}/fixtures`, id), { ...details, pitchId: availablePitch.id }, { merge: true });
-          return;
+          // Get all pitches used by this group on this day
+          const pitchesUsedByGroupToday = new Set<string>();
+          if (targetFixture.groupId) {
+            updatedFixtures
+              .filter(f => f.id !== id && f.groupId === targetFixture.groupId && f.date === targetFixture.date)
+              .forEach(f => {
+                if (f.pitchId) pitchesUsedByGroupToday.add(f.pitchId);
+              });
+          }
+
+          // Find a pitch that is NOT in either set
+          const availablePitch = pitches.find(p => 
+            !pitchesOccupiedAtTime.has(p.id) && 
+            !pitchesUsedByGroupToday.has(p.id)
+          );
+
+          if (availablePitch) {
+            // Reassign target to available pitch
+            await setDoc(doc(db, path), { ...details, pitchId: availablePitch.id }, { merge: true });
+            return;
+          }
         }
       }
+      
+      await setDoc(doc(db, path), details, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
     }
-    
-    await setDoc(doc(db, `users/${userId}/fixtures`, id), details, { merge: true });
   };
 
   const updateMatchdayDate = async (matchday: number, date: string) => {
     if (!userId || !isAdmin) return;
-    // Update settings to store custom matchday date
-    const currentCustomMatchdays = settings.matchdaySettings?.customMatchdays || [];
-    const existingIndex = currentCustomMatchdays.findIndex(m => m.matchday === matchday);
-    
-    let newCustomMatchdays;
-    if (existingIndex >= 0) {
-      newCustomMatchdays = [...currentCustomMatchdays];
-      newCustomMatchdays[existingIndex] = { matchday, date };
-    } else {
-      newCustomMatchdays = [...currentCustomMatchdays, { matchday, date }];
-    }
-    
-    await setSettings({
-      ...settings,
-      matchdaySettings: {
-        numberOfMatchdays: settings.matchdaySettings?.numberOfMatchdays || 0,
-        customMatchdays: newCustomMatchdays
+    try {
+      // Update settings to store custom matchday date
+      const currentCustomMatchdays = settings.matchdaySettings?.customMatchdays || [];
+      const existingIndex = currentCustomMatchdays.findIndex(m => m.matchday === matchday);
+      
+      let newCustomMatchdays;
+      if (existingIndex >= 0) {
+        newCustomMatchdays = [...currentCustomMatchdays];
+        newCustomMatchdays[existingIndex] = { ...currentCustomMatchdays[existingIndex], date };
+      } else {
+        newCustomMatchdays = [...currentCustomMatchdays, { matchday, date }];
       }
-    });
+      
+      await setSettings({
+        ...settings,
+        matchdaySettings: {
+          ...(settings.matchdaySettings || { numberOfMatchdays: 0, customMatchdays: [] }),
+          customMatchdays: newCustomMatchdays
+        }
+      });
 
-    // Update existing fixtures
-    const batch = writeBatch(db);
-    fixtures.forEach(f => {
-      if (f.matchday === matchday) {
-        batch.update(doc(db, `users/${userId}/fixtures`, f.id), { date });
-      }
-    });
-    await batch.commit();
+      // Update existing fixtures
+      const batch = writeBatch(db);
+      fixtures.forEach(f => {
+        if (f.matchday === matchday) {
+          batch.update(doc(db, `users/${userId}/fixtures`, f.id), { date });
+        }
+      });
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/fixtures`);
+    }
   };
 
   const toggleFixtureStarted = async (id: string) => {
     if (!userId || !isAdmin) return;
     const fixture = fixtures.find(f => f.id === id);
     if (fixture) {
-      await setDoc(doc(db, `users/${userId}/fixtures`, id), { isStarted: !fixture.isStarted }, { merge: true });
+      const path = `users/${userId}/fixtures/${id}`;
+      try {
+        await setDoc(doc(db, path), { isStarted: !fixture.isStarted }, { merge: true });
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, path);
+      }
     }
   };
 
@@ -821,12 +1059,17 @@ export function useTournament(publicTournamentId?: string) {
     const f = fixtures.find(f => f.id === id);
     if (f) {
       const isNowPlayed = !f.isPlayed;
-      await setDoc(doc(db, `users/${userId}/fixtures`, id), {
-        isPlayed: isNowPlayed,
-        isStarted: isNowPlayed ? true : f.isStarted,
-        homeScore: isNowPlayed && f.homeScore === null ? 0 : f.homeScore,
-        awayScore: isNowPlayed && f.awayScore === null ? 0 : f.awayScore
-      }, { merge: true });
+      const path = `users/${userId}/fixtures/${id}`;
+      try {
+        await setDoc(doc(db, path), {
+          isPlayed: isNowPlayed,
+          isStarted: isNowPlayed ? true : f.isStarted,
+          homeScore: isNowPlayed && f.homeScore === null ? 0 : f.homeScore,
+          awayScore: isNowPlayed && f.awayScore === null ? 0 : f.awayScore
+        }, { merge: true });
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, path);
+      }
     }
   };
 
@@ -927,10 +1170,10 @@ export function useTournament(publicTournamentId?: string) {
             isViceCaptain: j === 1,
             isActive,
             photoUrl: `https://i.pravatar.cc/150?u=${generateId()}`,
-            pitchPosition: isActive ? { 
+            ...(isActive ? { pitchPosition: { 
               x: position === 'GK' ? 50 : position === 'DF' ? 20 + (j % 3) * 30 : position === 'MF' ? 20 + (j % 3) * 30 : 50, 
               y: position === 'GK' ? 90 : position === 'DF' ? 75 : position === 'MF' ? 50 : 25 
-            } : undefined
+            } } : {})
           });
         }
         const id = generateId();
@@ -942,7 +1185,11 @@ export function useTournament(publicTournamentId?: string) {
       batch.set(doc(db, `users/${userId}/teams`, teamA.id), teamA);
       batch.set(doc(db, `users/${userId}/teams`, teamB.id), teamB);
     }
-    await batch.commit();
+    try {
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/test-data`);
+    }
   };
 
   const addMatchEvent = async (fixtureId: string, event: Omit<MatchEvent, 'id'>) => {
@@ -965,7 +1212,12 @@ export function useTournament(publicTournamentId?: string) {
       }
     }
     
-    await setDoc(doc(db, `users/${userId}/fixtures`, fixtureId), { events, homeScore, awayScore }, { merge: true });
+    const path = `users/${userId}/fixtures/${fixtureId}`;
+    try {
+      await setDoc(doc(db, path), { events, homeScore, awayScore }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
   };
 
   const removeMatchEvent = async (fixtureId: string, eventId: string) => {
@@ -988,7 +1240,12 @@ export function useTournament(publicTournamentId?: string) {
       }
     }
     
-    await setDoc(doc(db, `users/${userId}/fixtures`, fixtureId), { events, homeScore, awayScore }, { merge: true });
+    const path = `users/${userId}/fixtures/${fixtureId}`;
+    try {
+      await setDoc(doc(db, path), { events, homeScore, awayScore }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
   };
 
   const getPlayerStats = () => {
@@ -1029,8 +1286,9 @@ export function useTournament(publicTournamentId?: string) {
     return Object.values(stats).sort((a, b) => b.goals - a.goals);
   };
 
-  const reassignFixturesFromMatchday = async (matchday: number, selectedFixtureIds: string[]) => {
+  const reassignFixturesFromMatchday = async (matchday: number, selectedFixtureIds: string[], overrideSettings?: Settings) => {
     if (!userId || !isAdmin) return;
+    const activeSettings = overrideSettings || settings;
     const unplayedFixtures = fixtures.filter(f => !f.isPlayed);
     const playedFixtures = fixtures.filter(f => f.isPlayed);
     
@@ -1042,8 +1300,8 @@ export function useTournament(publicTournamentId?: string) {
     
     selected.forEach(f => f.matchday = matchday);
     
-    const globalRestingDays = settings.matchdaySettings?.restingDays || 0;
-    const globalMatchesPerDay = settings.matchdaySettings?.matchesPerDay || 0;
+    const globalRestingDays = activeSettings.matchdaySettings?.restingDays || 0;
+    const globalMatchesPerDay = activeSettings.matchdaySettings?.matchesPerDay || 0;
     
     const teamLastPlayedOn = new Map<string, number>();
     [...playedFixtures, ...pastUnplayed, ...selected].forEach(f => {
@@ -1056,27 +1314,40 @@ export function useTournament(publicTournamentId?: string) {
     // Determine starting active settings based on previous matchdays
     let activeRestingDays = globalRestingDays;
     let activeMatchesPerDay = globalMatchesPerDay;
+    let isMatchesPerDayAuto = globalMatchesPerDay === 0;
     
-    const sortedCustom = [...(settings.matchdaySettings?.customMatchdays || [])].sort((a, b) => a.matchday - b.matchday);
+    const sortedCustom = [...(activeSettings.matchdaySettings?.customMatchdays || [])].sort((a, b) => a.matchday - b.matchday);
     
     let currentMatchday = matchday + 1;
     
     // Initialize active settings up to currentMatchday
     for (const custom of sortedCustom) {
       if (custom.matchday >= currentMatchday) break;
-      if (custom.restingDays !== undefined) activeRestingDays = custom.restingDays;
-      if (custom.matchesPerDay !== undefined) activeMatchesPerDay = custom.matchesPerDay;
+      if (custom.restingDays !== null && custom.restingDays !== undefined) activeRestingDays = custom.restingDays;
+      if (custom.matchesPerDay !== null && custom.matchesPerDay !== undefined) {
+        activeMatchesPerDay = custom.matchesPerDay;
+        isMatchesPerDayAuto = false;
+      }
     }
 
-    const queue = [...remaining];
+    // Sort queue by current matchday and order to preserve manual prioritization
+    const queue = [...remaining].sort((a, b) => {
+      if (a.matchday !== b.matchday) return a.matchday - b.matchday;
+      return (a.order || 0) - (b.order || 0);
+    });
     const newlyScheduled: Fixture[] = [];
 
     while (queue.length > 0) {
       // Update active settings for current day
-      const customToday = settings.matchdaySettings?.customMatchdays?.find(m => m.matchday === currentMatchday);
+      const customToday = activeSettings.matchdaySettings?.customMatchdays?.find(m => m.matchday === currentMatchday);
+      
+      // Inherit from previous day (which starts as global default), then override with custom if exists
       if (customToday) {
-        if (customToday.restingDays !== undefined) activeRestingDays = customToday.restingDays;
-        if (customToday.matchesPerDay !== undefined) activeMatchesPerDay = customToday.matchesPerDay;
+        if (customToday.restingDays !== null && customToday.restingDays !== undefined) activeRestingDays = customToday.restingDays;
+        if (customToday.matchesPerDay !== null && customToday.matchesPerDay !== undefined) {
+          activeMatchesPerDay = customToday.matchesPerDay;
+          isMatchesPerDayAuto = false;
+        }
       }
 
       let matchesToday = 0;
@@ -1095,10 +1366,16 @@ export function useTournament(publicTournamentId?: string) {
         const awayCanPlay = (currentMatchday - awayLastPlayed) > activeRestingDays;
         const homeNotPlayingToday = !teamsPlayingToday.has(homeId);
         const awayNotPlayingToday = !teamsPlayingToday.has(awayId);
-        const matchesPerDayLimitNotReached = activeMatchesPerDay === 0 || matchesToday < activeMatchesPerDay;
+        
+        // Respect matchesPerDay limit
+        let matchesPerDayLimitNotReached = true;
+        if (!isMatchesPerDayAuto) {
+          matchesPerDayLimitNotReached = matchesToday < activeMatchesPerDay;
+        }
         
         if (homeCanPlay && awayCanPlay && homeNotPlayingToday && awayNotPlayingToday && matchesPerDayLimitNotReached) {
           match.matchday = currentMatchday;
+          match.order = matchesToday; // Assign order based on scheduling sequence
           newlyScheduled.push(match);
           queue.splice(i, 1);
           i--;
@@ -1119,17 +1396,17 @@ export function useTournament(publicTournamentId?: string) {
     
     // Update settings if matchdays changed due to constraints
     const maxMatchday = allUpdatedFixtures.reduce((max, f) => Math.max(max, f.matchday), 0);
-    if (maxMatchday > 0 && (!settings.matchdaySettings?.numberOfMatchdays || settings.matchdaySettings.numberOfMatchdays < maxMatchday)) {
+    if (maxMatchday > 0 && maxMatchday !== activeSettings.matchdaySettings?.numberOfMatchdays) {
       await setSettings(prev => ({
         ...prev,
         matchdaySettings: {
-          ...prev.matchdaySettings!,
+          ...(prev.matchdaySettings || { numberOfMatchdays: 0, customMatchdays: [] }),
           numberOfMatchdays: maxMatchday
         }
       }));
     }
 
-    const pitches = settings.pitches || [{ id: 'pitch-1', name: 'Pitch 1' }];
+    const pitches = activeSettings.pitches || [{ id: 'pitch-1', name: 'Pitch 1' }];
     const fixturesByMatchday: Record<number, Fixture[]> = {};
     allUpdatedFixtures.forEach(f => {
       if (!fixturesByMatchday[f.matchday]) fixturesByMatchday[f.matchday] = [];
@@ -1141,24 +1418,42 @@ export function useTournament(publicTournamentId?: string) {
       const dayFixtures = fixturesByMatchday[day];
       if (dayFixtures.some(f => !f.isPlayed)) {
         const matchdayIndex = day - 1;
-        const date = getDateForMatchday(matchdayIndex);
-        const startTime = getTimeForMatchday(matchdayIndex);
+        const date = getDateForMatchday(matchdayIndex, activeSettings);
+        const startTime = getTimeForMatchday(matchdayIndex, activeSettings);
         dayFixtures.forEach(f => { if (!f.isPlayed) f.date = date; });
         scheduleMatchdayMatches(dayFixtures.filter(f => !f.isPlayed), pitches, startTime || '09:00');
       }
     });
 
-    const batch = writeBatch(db);
-    allUpdatedFixtures.forEach(f => {
-      batch.set(doc(db, `users/${userId}/fixtures`, f.id), { ...f, userId });
-    });
-    await batch.commit();
+    try {
+      const batch = writeBatch(db);
+      allUpdatedFixtures.forEach(f => {
+        batch.set(doc(db, `users/${userId}/fixtures`, f.id), { ...f, userId });
+      });
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/fixtures`);
+    }
+  };
+
+  const rescheduleFixtures = async (overrideSettings?: Settings) => {
+    if (!userId || !isAdmin || fixtures.length === 0) return;
+    const unplayed = fixtures.filter(f => !f.isPlayed);
+    if (unplayed.length === 0) return;
+    
+    const firstUnplayedMatchday = Math.min(...unplayed.map(f => f.matchday));
+    await reassignFixturesFromMatchday(firstUnplayedMatchday - 1, [], overrideSettings);
   };
 
   const toggleRole = async () => {
     if (!userId) return;
     const newRole = userRole === 'admin' ? 'viewer' : 'admin';
-    await setDoc(doc(db, 'users', userId), { role: newRole }, { merge: true });
+    const path = `users/${userId}`;
+    try {
+      await setDoc(doc(db, 'users', userId), { role: newRole }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
   };
 
   return {
@@ -1187,9 +1482,11 @@ export function useTournament(publicTournamentId?: string) {
     removeMatchEvent,
     getPlayerStats,
     reassignFixturesFromMatchday,
+    rescheduleFixtures,
     fillAllTeamSheetsWithTestData,
     reorderTeams,
     reorderFixtures,
+    moveFixture,
     toggleRole,
     loading,
     userId,

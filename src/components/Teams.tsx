@@ -6,6 +6,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Team, Group, Settings } from '../types';
 import { Trash2, Plus, Pencil, X, ClipboardList, Users, FolderPlus, Upload, ImageIcon } from 'lucide-react';
 import { TeamSheetModal } from './TeamSheetModal';
+import { ConfirmModal } from './ConfirmModal';
 import { exportAsImage } from '../utils/exportImage';
 
 interface TeamsProps {
@@ -30,10 +31,10 @@ interface SortableTeamRowProps {
   isAdmin: boolean;
   onEditClick: (team: Team) => void;
   onSheetClick: (teamId: string) => void;
-  onDeleteTeam: (id: string) => void;
+  onDeleteClick: (teamId: string) => void;
 }
 
-const SortableTeamRow: React.FC<SortableTeamRowProps> = ({ team, groups, isEditing, isAdmin, onEditClick, onSheetClick, onDeleteTeam }) => {
+const SortableTeamRow: React.FC<SortableTeamRowProps> = ({ team, groups, isEditing, isAdmin, onEditClick, onSheetClick, onDeleteClick }) => {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: team.id });
   const style = { transform: CSS.Transform.toString(transform), transition };
   const rowRef = useRef<HTMLTableRowElement>(null);
@@ -46,14 +47,14 @@ const SortableTeamRow: React.FC<SortableTeamRowProps> = ({ team, groups, isEditi
         </td>
       )}
       <td className="px-6 py-4 font-medium text-gray-200 cursor-pointer hover:text-indigo-400" onClick={() => onSheetClick(team.id)}>{team.name}</td>
-      <td className="px-6 py-4" contentEditable={isEditing} suppressContentEditableWarning={true}>
+      <td className="px-6 py-4" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-sm font-medium bg-[#1A1D24] text-gray-300 border border-gray-700/50">
           {team.initial}
         </span>
       </td>
-      <td className="px-6 py-4 text-gray-400" contentEditable={isEditing} suppressContentEditableWarning={true}>{team.manager || '-'}</td>
-      <td className="px-6 py-4 text-gray-400" contentEditable={isEditing} suppressContentEditableWarning={true}>{team.phone || '-'}</td>
-      <td className="px-6 py-4" contentEditable={isEditing} suppressContentEditableWarning={true}>
+      <td className="px-6 py-4 text-gray-400" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{team.manager || '-'}</td>
+      <td className="px-6 py-4 text-gray-400" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{team.phone || '-'}</td>
+      <td className="px-6 py-4" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>
         {team.groupId ? (
           <span className="text-indigo-400 text-sm font-medium">
             {groups.find(g => g.id === team.groupId)?.name || '-'}
@@ -80,11 +81,7 @@ const SortableTeamRow: React.FC<SortableTeamRowProps> = ({ team, groups, isEditi
               <Pencil className="w-4 h-4" />
             </button>
             <button
-              onClick={() => {
-                if (window.confirm('Are you sure you want to delete this team? This will reset all fixtures.')) {
-                  onDeleteTeam(team.id);
-                }
-              }}
+              onClick={() => onDeleteClick(team.id)}
               className="text-red-400 hover:text-red-300 p-2 rounded-xl hover:bg-red-400/10 transition-colors"
               title="Delete Team"
             >
@@ -102,6 +99,7 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
   const [editingId, setEditingId] = useState<string | null>(null);
   const [sheetTeamId, setSheetTeamId] = useState<string | null>(null);
   const [showFillConfirm, setShowFillConfirm] = useState(false);
+  const [teamToDelete, setTeamToDelete] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState('');
   const [initial, setInitial] = useState('');
@@ -200,7 +198,7 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
               <Plus className="w-5 h-5 text-indigo-400" /> {editingId ? 'Edit Team' : 'Add New Team'}
             </h2>
             <div className="flex gap-2">
-              <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv" className="hidden" />
+              <input type="file" id="csv-import" name="csvImport" ref={fileInputRef} onChange={handleFileUpload} accept=".csv" className="hidden" />
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className="text-sm text-gray-300 hover:text-white flex items-center gap-1 bg-[#1A1D24]/80 px-3 py-1.5 rounded-xl border border-gray-700/50 transition-all duration-200 shadow-sm"
@@ -259,9 +257,11 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
           </div>
           <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-4 items-end">
             <div className="lg:col-span-2">
-              <label className="block text-sm font-medium text-gray-400 mb-1">Team Name *</label>
+              <label htmlFor="team-name" className="block text-sm font-medium text-gray-400 mb-1">Team Name *</label>
               <input
                 type="text"
+                id="team-name"
+                name="teamName"
                 required
                 className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
                 value={name}
@@ -270,9 +270,11 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">Initials *</label>
+              <label htmlFor="team-initials" className="block text-sm font-medium text-gray-400 mb-1">Initials *</label>
               <input
                 type="text"
+                id="team-initials"
+                name="teamInitials"
                 required
                 maxLength={4}
                 className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all uppercase shadow-inner"
@@ -282,9 +284,11 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">Manager</label>
+              <label htmlFor="team-manager" className="block text-sm font-medium text-gray-400 mb-1">Manager</label>
               <input
                 type="text"
+                id="team-manager"
+                name="teamManager"
                 className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
                 value={manager}
                 onChange={(e) => setManager(e.target.value)}
@@ -292,9 +296,11 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">Phone Number</label>
+              <label htmlFor="team-phone" className="block text-sm font-medium text-gray-400 mb-1">Phone Number</label>
               <input
                 type="tel"
+                id="team-phone"
+                name="teamPhone"
                 className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
@@ -302,8 +308,10 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">Group</label>
+              <label htmlFor="team-group" className="block text-sm font-medium text-gray-400 mb-1">Group</label>
               <select
+                id="team-group"
+                name="teamGroup"
                 className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
                 value={groupId}
                 onChange={(e) => setGroupId(e.target.value)}
@@ -399,7 +407,16 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
                 <SortableContext items={teams.map(t => t.id)} strategy={verticalListSortingStrategy}>
                   <tbody className="divide-y divide-gray-800/30">
                     {teams.map((team) => (
-                      <SortableTeamRow key={team.id} team={team} groups={groups} isEditing={isEditing} isAdmin={isAdmin} onEditClick={handleEditClick} onSheetClick={setSheetTeamId} onDeleteTeam={onDeleteTeam} />
+                      <SortableTeamRow 
+                        key={team.id} 
+                        team={team} 
+                        groups={groups} 
+                        isEditing={isEditing} 
+                        isAdmin={isAdmin} 
+                        onEditClick={handleEditClick} 
+                        onSheetClick={setSheetTeamId} 
+                        onDeleteClick={(id) => setTeamToDelete(id)} 
+                      />
                     ))}
                   </tbody>
                 </SortableContext>
@@ -409,10 +426,19 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
         )}
       </div>
 
+      <ConfirmModal 
+        isOpen={!!teamToDelete}
+        title="Delete Team"
+        message="Are you sure you want to delete this team? This will reset all fixtures."
+        onConfirm={() => teamToDelete && onDeleteTeam(teamToDelete)}
+        onCancel={() => setTeamToDelete(null)}
+      />
+
       {sheetTeamId && (
         <TeamSheetModal
           team={teams.find(t => t.id === sheetTeamId)!}
           settings={settings}
+          isAdmin={isAdmin}
           onSave={onEditTeam}
           onClose={() => setSheetTeamId(null)}
         />

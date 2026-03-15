@@ -7,9 +7,10 @@ import { exportAsImage } from '../utils/exportImage';
 
 interface PlayerStatsProps {
   stats: PlayerStat[];
+  isAdmin: boolean;
 }
 
-export function PlayerStats({ stats }: PlayerStatsProps) {
+export function PlayerStats({ stats, isAdmin }: PlayerStatsProps) {
   const [isEditing, setIsEditing] = useState(false);
   const statsRef = useRef<HTMLDivElement>(null);
 
@@ -22,12 +23,14 @@ export function PlayerStats({ stats }: PlayerStatsProps) {
   return (
     <div className="space-y-6">
       <div className="flex justify-end gap-2">
-        <button
-          onClick={() => setIsEditing(!isEditing)}
-          className={cn("flex items-center gap-2 px-4 py-2 bg-[#1A1D24]/80 backdrop-blur-md border border-gray-700/50 text-gray-300 rounded-xl hover:bg-gray-800 transition-all duration-200 text-sm shadow-sm", isEditing && "bg-indigo-600/20 text-indigo-400 border-indigo-500/50")}
-        >
-          <Pencil className="w-4 h-4" /> {isEditing ? 'Done Editing' : 'Edit Stats'}
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setIsEditing(!isEditing)}
+            className={cn("flex items-center gap-2 px-4 py-2 bg-[#1A1D24]/80 backdrop-blur-md border border-gray-700/50 text-gray-300 rounded-xl hover:bg-gray-800 transition-all duration-200 text-sm shadow-sm", isEditing && "bg-indigo-600/20 text-indigo-400 border-indigo-500/50")}
+          >
+            <Pencil className="w-4 h-4" /> {isEditing ? 'Done Editing' : 'Edit Stats'}
+          </button>
+        )}
       </div>
 
       <div ref={statsRef} className="grid grid-cols-1 lg:grid-cols-3 gap-6 bg-[#0B0E14] p-4 -m-4 rounded-2xl">
@@ -53,11 +56,11 @@ export function PlayerStats({ stats }: PlayerStatsProps) {
                       {index + 1}
                     </div>
                     <div>
-                      <div className="text-sm font-medium text-gray-200" contentEditable={isEditing} suppressContentEditableWarning={true}>{player.playerName}</div>
-                      <div className="text-xs text-gray-500" contentEditable={isEditing} suppressContentEditableWarning={true}>{player.teamName}</div>
+                      <div className="text-sm font-medium text-gray-200" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{player.playerName}</div>
+                      <div className="text-xs text-gray-500" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{player.teamName}</div>
                     </div>
                   </div>
-                  <div className="font-bold text-emerald-400" contentEditable={isEditing} suppressContentEditableWarning={true}>{player.goals}</div>
+                  <div className="font-bold text-emerald-400" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{player.goals}</div>
                 </div>
               ))
             )}
@@ -78,11 +81,11 @@ export function PlayerStats({ stats }: PlayerStatsProps) {
                   <div className="flex items-center gap-3">
                     <div className="text-xs font-bold text-gray-500 w-6 text-center">{index + 1}</div>
                     <div>
-                      <div className="text-sm font-medium text-gray-200" contentEditable={isEditing} suppressContentEditableWarning={true}>{player.playerName}</div>
-                      <div className="text-xs text-gray-500" contentEditable={isEditing} suppressContentEditableWarning={true}>{player.teamName}</div>
+                      <div className="text-sm font-medium text-gray-200" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{player.playerName}</div>
+                      <div className="text-xs text-gray-500" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{player.teamName}</div>
                     </div>
                   </div>
-                  <div className="font-bold text-yellow-500" contentEditable={isEditing} suppressContentEditableWarning={true}>{player.yellowCards}</div>
+                  <div className="font-bold text-yellow-500" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{player.yellowCards}</div>
                 </div>
               ))
             )}
@@ -103,11 +106,11 @@ export function PlayerStats({ stats }: PlayerStatsProps) {
                   <div className="flex items-center gap-3">
                     <div className="text-xs font-bold text-gray-500 w-6 text-center">{index + 1}</div>
                     <div>
-                      <div className="text-sm font-medium text-gray-200" contentEditable={isEditing} suppressContentEditableWarning={true}>{player.playerName}</div>
-                      <div className="text-xs text-gray-500" contentEditable={isEditing} suppressContentEditableWarning={true}>{player.teamName}</div>
+                      <div className="text-sm font-medium text-gray-200" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{player.playerName}</div>
+                      <div className="text-xs text-gray-500" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{player.teamName}</div>
                     </div>
                   </div>
-                  <div className="font-bold text-red-500" contentEditable={isEditing} suppressContentEditableWarning={true}>{player.redCards}</div>
+                  <div className="font-bold text-red-500" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{player.redCards}</div>
                 </div>
               ))
             )}

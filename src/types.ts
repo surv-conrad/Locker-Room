@@ -50,6 +50,7 @@ export interface Fixture {
   pitchId?: string;
   groupId?: string;
   events?: MatchEvent[];
+  order?: number;
 }
 
 export interface PlayerStat {
@@ -76,6 +77,7 @@ export interface StageSettings {
 export interface Settings {
   logoUrl: string;
   startDate: string;
+  startTime?: string;
   tournamentName?: string;
   description?: string;
   numberOfTeams?: number;
@@ -85,6 +87,7 @@ export interface Settings {
   primaryColor?: string;
   matchdaySettings?: {
     numberOfMatchdays: number;
+    isManual?: boolean;
     matchesPerDay?: number;
     restingDays?: number;
     customMatchdays: { 

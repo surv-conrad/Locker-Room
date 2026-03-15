@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Team, Player, Settings } from '../types';
 import { X, Plus, Trash2, Save, Users, Layout, List, Shield, ShieldAlert, Camera, Move, RefreshCw, Star, ChevronRight, Search, Info, RotateCcw, Image as ImageIcon, Pencil, Upload, Download } from 'lucide-react';
+import { ConfirmModal } from './ConfirmModal';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { useExport } from '../contexts/ExportContext';
 import { generateId, cn } from '../utils';
@@ -22,13 +23,15 @@ const PlayerPhoto = ({ player, className }: { player: Player, className?: string
 interface TeamSheetModalProps {
   team: Team;
   settings: Settings;
+  isAdmin: boolean;
   onSave: (id: string, updates: Partial<Team>) => void;
   onClose: () => void;
 }
 
-export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetModalProps) {
+export function TeamSheetModal({ team, settings, isAdmin, onSave, onClose }: TeamSheetModalProps) {
   if (!team) return null;
   const [players, setPlayers] = useState<Player[]>(team.players || []);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [name, setName] = useState('');
   const [number, setNumber] = useState('');
   const [position, setPosition] = useState('MF');
@@ -431,74 +434,81 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
 
           <div className="flex items-center gap-4">
             <button
-              onClick={() => {
-                if (window.confirm('Are you sure you want to reset this team to the default layout?')) {
-                  try {
-                    const savedLayout = localStorage.getItem('defaultPitchLayout');
-                    if (savedLayout) {
-                      const parsed = JSON.parse(savedLayout);
-                      if (parsed.pitchSize) {
-                        setPitchSize(parsed.pitchSize);
-                      }
-                      if (parsed.pitchScrollPosition) {
-                        currentScrollPosRef.current = parsed.pitchScrollPosition;
-                        if (scrollContainerRef.current) {
-                          scrollContainerRef.current.scrollLeft = parsed.pitchScrollPosition.x;
-                          scrollContainerRef.current.scrollTop = parsed.pitchScrollPosition.y;
-                          
-                          setTimeout(() => {
-                            if (scrollContainerRef.current) {
-                              scrollContainerRef.current.scrollLeft = parsed.pitchScrollPosition.x;
-                              scrollContainerRef.current.scrollTop = parsed.pitchScrollPosition.y;
-                            }
-                          }, 50);
-                        }
-                      }
-                      if (parsed.positions && Array.isArray(parsed.positions)) {
-                        const newPlayers = [...players];
-                        const active = newPlayers.filter(p => p.isActive);
-                        let slots = [
-                          ...parsed.positions.map((p: any) => ({ ...p, filled: false })),
-                          { role: 'GK', x: 10, y: 50, filled: false },
-                          { role: 'DF', x: 28, y: 20, filled: false },
-                          { role: 'DF', x: 28, y: 50, filled: false },
-                          { role: 'DF', x: 28, y: 80, filled: false },
-                          { role: 'MF', x: 50, y: 30, filled: false },
-                          { role: 'MF', x: 50, y: 70, filled: false },
-                          { role: 'FW', x: 70, y: 50, filled: false },
-                        ];
-                        active.forEach(player => {
-                            let slot = slots.find(s => !s.filled && player.position.includes(s.role));
-                            if (!slot) {
-                                slot = slots.find(s => !s.filled);
-                            }
-                            if (slot) {
-                                player.pitchPosition = { x: slot.x, y: slot.y };
-                                slot.filled = true;
-                            }
-                        });
-                        setPlayers(newPlayers);
-                      }
-                    } else {
-                      alert('No default layout saved yet.');
+              onClick={() => setShowResetConfirm(true)}
+              className="text-gray-400 hover:text-indigo-400 transition-colors flex items-center gap-2 text-xs font-medium"
+            >
+              <RotateCcw className="w-3.5 h-3.5" /> Reset Layout
+            </button>
+            <ConfirmModal 
+              isOpen={showResetConfirm}
+              title="Reset Layout"
+              message="Are you sure you want to reset this team to the default layout?"
+              onConfirm={() => {
+                try {
+                  const savedLayout = localStorage.getItem('defaultPitchLayout');
+                  if (savedLayout) {
+                    const parsed = JSON.parse(savedLayout);
+                    if (parsed.pitchSize) {
+                      setPitchSize(parsed.pitchSize);
                     }
-                  } catch (e) {
-                    console.error('Failed to load default layout', e);
+                    if (parsed.pitchScrollPosition) {
+                      currentScrollPosRef.current = parsed.pitchScrollPosition;
+                      if (scrollContainerRef.current) {
+                        scrollContainerRef.current.scrollLeft = parsed.pitchScrollPosition.x;
+                        scrollContainerRef.current.scrollTop = parsed.pitchScrollPosition.y;
+                        
+                        setTimeout(() => {
+                          if (scrollContainerRef.current) {
+                            scrollContainerRef.current.scrollLeft = parsed.pitchScrollPosition.x;
+                            scrollContainerRef.current.scrollTop = parsed.pitchScrollPosition.y;
+                          }
+                        }, 50);
+                      }
+                    }
+                    if (parsed.positions && Array.isArray(parsed.positions)) {
+                      const newPlayers = [...players];
+                      const active = newPlayers.filter(p => p.isActive);
+                      let slots = [
+                        ...parsed.positions.map((p: any) => ({ ...p, filled: false })),
+                        { role: 'GK', x: 10, y: 50, filled: false },
+                        { role: 'DF', x: 28, y: 20, filled: false },
+                        { role: 'DF', x: 28, y: 50, filled: false },
+                        { role: 'DF', x: 28, y: 80, filled: false },
+                        { role: 'MF', x: 50, y: 30, filled: false },
+                        { role: 'MF', x: 50, y: 70, filled: false },
+                        { role: 'FW', x: 70, y: 50, filled: false },
+                      ];
+                      active.forEach(player => {
+                          let slot = slots.find(s => !s.filled && player.position.includes(s.role));
+                          if (!slot) {
+                              slot = slots.find(s => !s.filled);
+                          }
+                          if (slot) {
+                              player.pitchPosition = { x: slot.x, y: slot.y };
+                              slot.filled = true;
+                          }
+                      });
+                      setPlayers(newPlayers);
+                    }
+                  } else {
+                    alert('No default layout saved yet.');
                   }
+                } catch (e) {
+                  console.error('Failed to load default layout', e);
                 }
+                setShowResetConfirm(false);
               }}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-800/50 text-gray-400 rounded-xl hover:bg-gray-700/50 transition-colors font-medium text-sm border border-gray-700/50"
-              title="Reset this team to the saved default layout"
-            >
-              <RotateCcw className="w-4 h-4" /> Reset to Default
-            </button>
-            <button
-              onClick={handleSaveAsDefault}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-600/20 text-indigo-400 rounded-xl hover:bg-indigo-600/30 transition-colors font-medium text-sm border border-indigo-500/30"
-              title="Save current pitch size and player positions as default for all teams"
-            >
-              <Save className="w-4 h-4" /> Save Default Layout
-            </button>
+              onCancel={() => setShowResetConfirm(false)}
+            />
+            {isAdmin && (
+              <button
+                onClick={handleSaveAsDefault}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600/20 text-indigo-400 rounded-xl hover:bg-indigo-600/30 transition-colors font-medium text-sm border border-indigo-500/30"
+                title="Save current pitch size and player positions as default for all teams"
+              >
+                <Save className="w-4 h-4" /> Save Default Layout
+              </button>
+            )}
             {viewMode === 'pitch' && (
               <button
                 onClick={() => exportAsImage(pitchRef.current, `${team.name.toLowerCase().replace(/\s+/g, '-')}-pitch`)}
@@ -559,45 +569,49 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
                 className="space-y-10"
               >
                 {/* Add Player Form */}
-                <form onSubmit={handleAddPlayer} className="bg-white/[0.02] p-8 rounded-[2.5rem] border border-white/5 shadow-2xl flex flex-wrap gap-6 items-end">
-                  <div className="flex-1 min-w-[250px]">
-                    <label className="block text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] mb-3">PLAYER IDENTITY</label>
-                    <div className="relative">
-                      <input type="text" required value={name} onChange={e => setName(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl px-5 py-4 text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm font-black placeholder:text-white/10 uppercase italic" placeholder="ENTER FULL NAME" />
+                {isAdmin && (
+                  <form onSubmit={handleAddPlayer} className="bg-white/[0.02] p-8 rounded-[2.5rem] border border-white/5 shadow-2xl flex flex-wrap gap-6 items-end">
+                    <div className="flex-1 min-w-[250px]">
+                      <label className="block text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] mb-3">PLAYER IDENTITY</label>
+                      <div className="relative">
+                        <input type="text" id="player-name" name="playerName" required value={name} onChange={e => setName(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl px-5 py-4 text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm font-black placeholder:text-white/10 uppercase italic" placeholder="ENTER FULL NAME" />
+                      </div>
                     </div>
-                  </div>
-                  <div className="w-28">
-                    <label className="block text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] mb-3">SQUAD #</label>
-                    <input type="text" value={number} onChange={e => setNumber(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl px-5 py-4 text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm font-black text-center" placeholder="00" />
-                  </div>
-                  <div className="w-36">
-                    <label className="block text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] mb-3">POSITION</label>
-                    <select 
-                      value={position} 
-                      onChange={e => setPosition(e.target.value)}
-                      className="w-full bg-black border border-white/10 rounded-2xl px-5 py-4 text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm font-black appearance-none cursor-pointer uppercase italic"
-                    >
-                      <option value="GK">GK</option>
-                      <option value="DF">DF</option>
-                      <option value="MF">MF</option>
-                      <option value="FW">FW</option>
-                    </select>
-                  </div>
-                  <div className="w-52">
-                    <label className="block text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] mb-3">AVATAR</label>
-                    <div className="relative flex items-center gap-2">
-                      <input type="text" value={photoUrl} onChange={e => setPhotoUrl(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl pl-12 pr-5 py-4 text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm font-black placeholder:text-white/10" placeholder="IMAGE URL" />
-                      <Camera className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-white/20" />
-                      <label className="cursor-pointer bg-white/5 p-4 rounded-2xl border border-white/10 hover:bg-white/10 transition-colors">
-                        <Upload className="w-5 h-5 text-indigo-400" />
-                        <input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
-                      </label>
+                    <div className="w-28">
+                      <label htmlFor="player-number" className="block text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] mb-3">SQUAD #</label>
+                      <input type="text" id="player-number" name="playerNumber" value={number} onChange={e => setNumber(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl px-5 py-4 text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm font-black text-center" placeholder="00" />
                     </div>
-                  </div>
-                  <button type="submit" className="bg-indigo-600 text-white px-10 py-4 rounded-2xl hover:bg-indigo-700 transition-all duration-300 flex items-center gap-3 text-xs font-black uppercase tracking-widest h-[56px] shadow-[0_15px_30px_rgba(79,70,229,0.3)] hover:translate-y-[-2px] active:translate-y-0">
-                    <Plus className="w-5 h-5" /> RECRUIT PLAYER
-                  </button>
-                </form>
+                    <div className="w-36">
+                      <label htmlFor="player-position" className="block text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] mb-3">POSITION</label>
+                      <select 
+                        id="player-position"
+                        name="playerPosition"
+                        value={position} 
+                        onChange={e => setPosition(e.target.value)}
+                        className="w-full bg-black border border-white/10 rounded-2xl px-5 py-4 text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm font-black appearance-none cursor-pointer uppercase italic"
+                      >
+                        <option value="GK">GK</option>
+                        <option value="DF">DF</option>
+                        <option value="MF">MF</option>
+                        <option value="FW">FW</option>
+                      </select>
+                    </div>
+                    <div className="w-52">
+                      <label htmlFor="player-photo" className="block text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] mb-3">AVATAR</label>
+                      <div className="relative flex items-center gap-2">
+                        <input type="text" id="player-photo" name="playerPhoto" value={photoUrl} onChange={e => setPhotoUrl(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl pl-12 pr-5 py-4 text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm font-black placeholder:text-white/10" placeholder="IMAGE URL" />
+                        <Camera className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-white/20" />
+                        <label htmlFor="player-photo-upload" className="cursor-pointer bg-white/5 p-4 rounded-2xl border border-white/10 hover:bg-white/10 transition-colors">
+                          <Upload className="w-5 h-5 text-indigo-400" />
+                          <input type="file" id="player-photo-upload" name="playerPhotoUpload" accept="image/*" className="hidden" onChange={handleFileUpload} />
+                        </label>
+                      </div>
+                    </div>
+                    <button type="submit" className="bg-indigo-600 text-white px-10 py-4 rounded-2xl hover:bg-indigo-700 transition-all duration-300 flex items-center gap-3 text-xs font-black uppercase tracking-widest h-[56px] shadow-[0_15px_30px_rgba(79,70,229,0.3)] hover:translate-y-[-2px] active:translate-y-0">
+                      <Plus className="w-5 h-5" /> RECRUIT PLAYER
+                    </button>
+                  </form>
+                )}
 
                 {/* Squad Table */}
                 <div className="space-y-6">
@@ -606,12 +620,14 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
                       SQUAD <span className="text-indigo-500">MANAGEMENT</span>
                     </h3>
                     <div className="flex items-center gap-4">
-                      <button
-                        onClick={() => setIsEditing(!isEditing)}
-                        className={`flex items-center gap-2 px-4 py-2 bg-[#1A1D24]/80 backdrop-blur-md border border-gray-700/50 text-gray-300 rounded-xl hover:bg-gray-800 transition-all duration-200 text-sm shadow-sm ${isEditing ? "bg-indigo-600/20 text-indigo-400 border-indigo-500/50" : ""}`}
-                      >
-                        <Pencil className="w-4 h-4" /> {isEditing ? 'Done Editing' : 'Edit Table'}
-                      </button>
+                      {isAdmin && (
+                        <button
+                          onClick={() => setIsEditing(!isEditing)}
+                          className={`flex items-center gap-2 px-4 py-2 bg-[#1A1D24]/80 backdrop-blur-md border border-gray-700/50 text-gray-300 rounded-xl hover:bg-gray-800 transition-all duration-200 text-sm shadow-sm ${isEditing ? "bg-indigo-600/20 text-indigo-400 border-indigo-500/50" : ""}`}
+                        >
+                          <Pencil className="w-4 h-4" /> {isEditing ? 'Done Editing' : 'Edit Table'}
+                        </button>
+                      )}
                       <div className="relative w-64">
                         <input 
                           type="text" 
@@ -634,7 +650,7 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
                           <th className="px-8 py-5 text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em]">POSITION</th>
                           <th className="px-8 py-5 text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em]">STATUS</th>
                           <th className="px-8 py-5 text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em]">ROLES</th>
-                          <th className="px-8 py-5 text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] text-right">ACTIONS</th>
+                          {isAdmin && <th className="px-8 py-5 text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] text-right">ACTIONS</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5">
@@ -644,7 +660,7 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
                             className="group hover:bg-white/[0.03] transition-colors"
                           >
                             <td className="px-8 py-4">
-                              <span className="text-lg font-black text-white/40 group-hover:text-indigo-500 transition-colors italic font-display" contentEditable={isEditing} suppressContentEditableWarning={true}>
+                              <span className="text-lg font-black text-white/40 group-hover:text-indigo-500 transition-colors italic font-display" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>
                                 {player.number || '00'}
                               </span>
                             </td>
@@ -655,24 +671,26 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
                                   {!player.isActive && <div className="absolute inset-0 bg-black/60 rounded-2xl flex items-center justify-center"><span className="text-[8px] font-black text-white/40 uppercase">BENCH</span></div>}
                                 </div>
                                 <div>
-                                  <p className="text-sm font-black text-white uppercase tracking-tight group-hover:text-indigo-400 transition-colors" contentEditable={isEditing} suppressContentEditableWarning={true}>{player.name}</p>
+                                  <p className="text-sm font-black text-white uppercase tracking-tight group-hover:text-indigo-400 transition-colors" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{player.name}</p>
                                   <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest mt-0.5">ID: {player.id.slice(0, 8)}</p>
                                 </div>
                               </div>
                             </td>
                             <td className="px-8 py-4">
-                              <span className="px-3 py-1 bg-white/5 border border-white/10 rounded-lg text-[10px] font-black text-white uppercase tracking-widest italic" contentEditable={isEditing} suppressContentEditableWarning={true}>
+                              <span className="px-3 py-1 bg-white/5 border border-white/10 rounded-lg text-[10px] font-black text-white uppercase tracking-widest italic" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>
                                 {player.position}
                               </span>
                             </td>
                             <td className="px-8 py-4">
                               <button 
-                                onClick={() => toggleActive(player.id)}
+                                onClick={() => isAdmin && toggleActive(player.id)}
+                                disabled={!isAdmin}
                                 className={cn(
                                   "px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all border",
                                   player.isActive 
                                     ? "bg-indigo-500/10 border-indigo-500/30 text-indigo-400" 
-                                    : "bg-gray-500/10 border-gray-500/30 text-gray-500 hover:text-indigo-400 hover:border-indigo-500/30"
+                                    : "bg-gray-500/10 border-gray-500/30 text-gray-500 hover:text-indigo-400 hover:border-indigo-500/30",
+                                  !isAdmin && "cursor-default hover:text-gray-500 hover:border-gray-500/30 opacity-80"
                                 )}
                               >
                                 {player.isActive ? 'STARTING XI' : 'SUBSTITUTE'}
@@ -681,24 +699,28 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
                             <td className="px-8 py-4">
                               <div className="flex items-center gap-2">
                                 <button 
-                                  onClick={() => toggleCaptain(player.id, 'captain')}
+                                  onClick={() => isAdmin && toggleCaptain(player.id, 'captain')}
+                                  disabled={!isAdmin}
                                   className={cn(
                                     "p-2 rounded-xl transition-all border group/btn",
                                     player.isCaptain 
                                       ? "bg-yellow-400 text-black border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.4)]" 
-                                      : "bg-white/5 border-white/10 text-white/20 hover:text-white/60"
+                                      : "bg-white/5 border-white/10 text-white/20 hover:text-white/60",
+                                    !isAdmin && "cursor-default hover:text-white/20"
                                   )}
                                   title="Set Captain"
                                 >
                                   <Shield className="w-4 h-4" />
                                 </button>
                                 <button 
-                                  onClick={() => toggleCaptain(player.id, 'vice')}
+                                  onClick={() => isAdmin && toggleCaptain(player.id, 'vice')}
+                                  disabled={!isAdmin}
                                   className={cn(
                                     "p-2 rounded-xl transition-all border",
                                     player.isViceCaptain 
                                       ? "bg-indigo-400 text-black border-indigo-400 shadow-[0_0_15px_rgba(129,140,248,0.4)]" 
-                                      : "bg-white/5 border-white/10 text-white/20 hover:text-white/60"
+                                      : "bg-white/5 border-white/10 text-white/20 hover:text-white/60",
+                                    !isAdmin && "cursor-default hover:text-white/20"
                                   )}
                                   title="Set Vice Captain"
                                 >
@@ -706,14 +728,16 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
                                 </button>
                               </div>
                             </td>
-                            <td className="px-8 py-4 text-right">
-                              <button 
-                                onClick={() => handleRemovePlayer(player.id)}
-                                className="p-3 text-red-500/40 hover:text-red-500 hover:bg-red-500/10 rounded-2xl transition-all"
-                              >
-                                <Trash2 className="w-5 h-5" />
-                              </button>
-                            </td>
+                            {isAdmin && (
+                              <td className="px-8 py-4 text-right">
+                                <button 
+                                  onClick={() => handleRemovePlayer(player.id)}
+                                  className="p-3 text-red-500/40 hover:text-red-500 hover:bg-red-500/10 rounded-2xl transition-all"
+                                >
+                                  <Trash2 className="w-5 h-5" />
+                                </button>
+                              </td>
+                            )}
                           </tr>
                         ))}
                       </tbody>
@@ -783,24 +807,26 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
                       maxWidth: pitchSize ? 'none' : '100%',
                       maxHeight: pitchSize ? 'none' : '800px'
                     }}
-                    onMouseMove={handlePitchMouseMove}
-                    onMouseUp={() => setDraggingPlayerId(null)}
-                    onMouseLeave={() => setDraggingPlayerId(null)}
+                    onMouseMove={isAdmin ? handlePitchMouseMove : undefined}
+                    onMouseUp={() => isAdmin && setDraggingPlayerId(null)}
+                    onMouseLeave={() => isAdmin && setDraggingPlayerId(null)}
                   >
                     {/* Resize Handle */}
-                    <div 
-                      className="absolute bottom-0 right-0 w-12 h-12 cursor-se-resize z-50 flex items-end justify-end p-3 group hide-on-export"
-                      onMouseDown={(e) => {
-                        e.stopPropagation();
-                        if (pitchRef.current) {
-                          const rect = pitchRef.current.getBoundingClientRect();
-                          resizeStartPos.current = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height };
-                          setIsResizing(true);
-                        }
-                      }}
-                    >
-                      <div className="w-4 h-4 border-b-4 border-r-4 border-white/30 group-hover:border-white/70 rounded-br-lg transition-colors" />
-                    </div>
+                    {isAdmin && (
+                      <div 
+                        className="absolute bottom-0 right-0 w-12 h-12 cursor-se-resize z-50 flex items-end justify-end p-3 group hide-on-export"
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          if (pitchRef.current) {
+                            const rect = pitchRef.current.getBoundingClientRect();
+                            resizeStartPos.current = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height };
+                            setIsResizing(true);
+                          }
+                        }}
+                      >
+                        <div className="w-4 h-4 border-b-4 border-r-4 border-white/30 group-hover:border-white/70 rounded-br-lg transition-colors" />
+                      </div>
+                    )}
 
                     {/* Volta Pitch Markings */}
                     <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-30" />
@@ -834,7 +860,8 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
                       <div 
                         key={player.id}
                         className={cn(
-                          "absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-2 group cursor-grab active:cursor-grabbing z-20",
+                          "absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-2 group z-20",
+                          isAdmin && "cursor-grab active:cursor-grabbing",
                           draggingPlayerId === player.id && "z-40 scale-110"
                         )}
                         style={{ 
@@ -842,6 +869,7 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
                           top: `${player.pitchPosition?.y || 50}%` 
                         }}
                         onMouseDown={(e) => {
+                          if (!isAdmin) return;
                           setDraggingPlayerId(player.id);
                           dragStartPos.current = { x: e.clientX, y: e.clientY };
                           isDraggingRef.current = false;
@@ -852,9 +880,13 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
                         <div className="absolute inset-0 bg-indigo-500/40 blur-2xl rounded-full scale-150 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                         
                         <div 
-                          className="w-16 h-20 rounded-2xl border-2 border-indigo-400/50 overflow-hidden shadow-[0_0_30px_rgba(99,102,241,0.4)] bg-indigo-600 relative z-10 transform group-hover:rotate-3 transition-transform cursor-pointer"
+                          className={cn(
+                            "w-16 h-20 rounded-2xl border-2 border-indigo-400/50 overflow-hidden shadow-[0_0_30px_rgba(99,102,241,0.4)] bg-indigo-600 relative z-10 transform transition-transform",
+                            isAdmin && "group-hover:rotate-3 cursor-pointer"
+                          )}
                           onClick={(e) => {
                             e.stopPropagation();
+                            if (!isAdmin) return;
                             if (!isDraggingRef.current) {
                               setSubbingPlayerId(player.id);
                             }
@@ -862,9 +894,11 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
                         >
                           <PlayerPhoto player={player} className="w-full h-full opacity-90 mix-blend-luminosity" />
                           <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/80 to-transparent" />
-                          <div className="absolute inset-0 bg-indigo-600/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm">
-                            <RefreshCw className="w-8 h-8 text-white animate-spin-slow" />
-                          </div>
+                          {isAdmin && (
+                            <div className="absolute inset-0 bg-indigo-600/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm">
+                              <RefreshCw className="w-8 h-8 text-white animate-spin-slow" />
+                            </div>
+                          )}
                         </div>
 
                         {/* Badges */}
@@ -950,22 +984,28 @@ export function TeamSheetModal({ team, settings, onSave, onClose }: TeamSheetMod
         {/* Footer Actions */}
         <div className="p-4 border-t border-white/5 bg-gradient-to-t from-white/5 to-transparent flex justify-between items-center shrink-0">
           <div className="flex items-center gap-3 text-gray-500">
-            <Info className="w-4 h-4 text-indigo-500" />
-            <p className="text-[9px] font-black uppercase tracking-widest">Changes are only permanent after saving squad</p>
+            {isAdmin && (
+              <>
+                <Info className="w-4 h-4 text-indigo-500" />
+                <p className="text-[9px] font-black uppercase tracking-widest">Changes are only permanent after saving squad</p>
+              </>
+            )}
           </div>
           <div className="flex gap-4">
             <button 
               onClick={onClose} 
               className="px-6 py-2.5 text-gray-400 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all font-black uppercase text-[10px] tracking-widest hover:text-white"
             >
-              DISCARD
+              {isAdmin ? 'DISCARD' : 'CLOSE'}
             </button>
-            <button 
-              onClick={handleSave} 
-              className="group flex items-center gap-3 px-8 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all font-black uppercase text-[10px] tracking-widest shadow-[0_15px_40px_rgba(79,70,229,0.4)] hover:translate-y-[-2px] active:translate-y-0"
-            >
-              <Save className="w-4 h-4 group-hover:scale-110 transition-transform" /> CONFIRM SQUAD
-            </button>
+            {isAdmin && (
+              <button 
+                onClick={handleSave} 
+                className="group flex items-center gap-3 px-8 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all font-black uppercase text-[10px] tracking-widest shadow-[0_15px_40px_rgba(79,70,229,0.4)] hover:translate-y-[-2px] active:translate-y-0"
+              >
+                <Save className="w-4 h-4 group-hover:scale-110 transition-transform" /> CONFIRM SQUAD
+              </button>
+            )}
           </div>
         </div>
       </div>

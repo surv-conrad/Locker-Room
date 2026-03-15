@@ -11,9 +11,10 @@ interface LeagueTableProps {
   table: LeagueRow[];
   fixtures: Fixture[];
   groups: Group[];
+  isAdmin: boolean;
 }
 
-export function LeagueTable({ table, fixtures, groups }: LeagueTableProps) {
+export function LeagueTable({ table, fixtures, groups, isAdmin }: LeagueTableProps) {
   const [isEditing, setIsEditing] = useState(false);
   const tableRef = useRef<HTMLDivElement>(null);
   
@@ -130,7 +131,7 @@ export function LeagueTable({ table, fixtures, groups }: LeagueTableProps) {
               </button>
             ))}
           </div>
-          {table.length > 0 && (
+          {table.length > 0 && isAdmin && (
             <div className="flex items-center gap-2 ml-4">
               <button
                 onClick={() => setIsEditing(!isEditing)}
@@ -201,26 +202,26 @@ export function LeagueTable({ table, fixtures, groups }: LeagueTableProps) {
                             index === 1 ? "bg-gray-400/20 text-gray-300" :
                             index === 2 ? "bg-amber-700/20 text-amber-600" :
                             "text-gray-500"
-                          )} contentEditable={isEditing} suppressContentEditableWarning={true}>
+                          )} contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>
                             {index + 1}
                           </span>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-200" contentEditable={isEditing} suppressContentEditableWarning={true}>
+                        <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-200" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>
                           {row.teamName}
                         </td>
-                        <td className="px-4 py-4 whitespace-nowrap text-center text-gray-400" contentEditable={isEditing} suppressContentEditableWarning={true}>{row.played}</td>
-                        <td className="px-4 py-4 whitespace-nowrap text-center text-gray-400" contentEditable={isEditing} suppressContentEditableWarning={true}>{row.won}</td>
-                        <td className="px-4 py-4 whitespace-nowrap text-center text-gray-400" contentEditable={isEditing} suppressContentEditableWarning={true}>{row.drawn}</td>
-                        <td className="px-4 py-4 whitespace-nowrap text-center text-gray-400" contentEditable={isEditing} suppressContentEditableWarning={true}>{row.lost}</td>
-                        <td className="px-4 py-4 whitespace-nowrap text-center text-gray-400" contentEditable={isEditing} suppressContentEditableWarning={true}>{row.goalsFor}</td>
-                        <td className="px-4 py-4 whitespace-nowrap text-center text-gray-400" contentEditable={isEditing} suppressContentEditableWarning={true}>{row.goalsAgainst}</td>
+                        <td className="px-4 py-4 whitespace-nowrap text-center text-gray-400" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{row.played}</td>
+                        <td className="px-4 py-4 whitespace-nowrap text-center text-gray-400" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{row.won}</td>
+                        <td className="px-4 py-4 whitespace-nowrap text-center text-gray-400" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{row.drawn}</td>
+                        <td className="px-4 py-4 whitespace-nowrap text-center text-gray-400" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{row.lost}</td>
+                        <td className="px-4 py-4 whitespace-nowrap text-center text-gray-400" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{row.goalsFor}</td>
+                        <td className="px-4 py-4 whitespace-nowrap text-center text-gray-400" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>{row.goalsAgainst}</td>
                         <td className="px-4 py-4 whitespace-nowrap text-center">
                           <span className={cn(
                             "font-medium",
                             row.goalDifference > 0 ? "text-green-500" :
                             row.goalDifference < 0 ? "text-red-500" :
                             "text-gray-500"
-                          )} contentEditable={isEditing} suppressContentEditableWarning={true}>
+                          )} contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>
                             {row.goalDifference > 0 ? '+' : ''}{row.goalDifference}
                           </span>
                         </td>
@@ -232,13 +233,13 @@ export function LeagueTable({ table, fixtures, groups }: LeagueTableProps) {
                                 f === 'W' ? "bg-emerald-500/20 text-emerald-500" :
                                 f === 'L' ? "bg-red-500/20 text-red-500" :
                                 "bg-gray-500/20 text-gray-400"
-                              )} contentEditable={isEditing} suppressContentEditableWarning={true}>
+                              )} contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>
                                 {f}
                               </span>
                             ))}
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center font-bold text-white text-lg" contentEditable={isEditing} suppressContentEditableWarning={true}>
+                        <td className="px-6 py-4 whitespace-nowrap text-center font-bold text-white text-lg" contentEditable={isAdmin && isEditing} suppressContentEditableWarning={true}>
                           {row.points}
                         </td>
                       </tr>

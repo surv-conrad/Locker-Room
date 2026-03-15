@@ -60,8 +60,10 @@ export function MatchEvents({ fixture, homeTeam, awayTeam, onAddEvent, onRemoveE
             </h3>
             <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
               <div className="md:col-span-1">
-                <label className="block text-xs text-gray-500 mb-1">Team</label>
+                <label htmlFor="team-select" className="block text-xs text-gray-500 mb-1">Team</label>
                 <select
+                  id="team-select"
+                  name="teamId"
                   className="w-full bg-[#151821] border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-indigo-500 outline-none"
                   value={selectedTeamId}
                   onChange={(e) => {
@@ -75,8 +77,10 @@ export function MatchEvents({ fixture, homeTeam, awayTeam, onAddEvent, onRemoveE
               </div>
 
               <div className="md:col-span-1">
-                <label className="block text-xs text-gray-500 mb-1">Player</label>
+                <label htmlFor="player-select" className="block text-xs text-gray-500 mb-1">Player</label>
                 <select
+                  id="player-select"
+                  name="playerId"
                   className="w-full bg-[#151821] border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-indigo-500 outline-none"
                   value={selectedPlayerId}
                   onChange={(e) => setSelectedPlayerId(e.target.value)}
@@ -90,8 +94,10 @@ export function MatchEvents({ fixture, homeTeam, awayTeam, onAddEvent, onRemoveE
               </div>
 
               <div className="md:col-span-1">
-                <label className="block text-xs text-gray-500 mb-1">Event</label>
+                <label htmlFor="event-type-select" className="block text-xs text-gray-500 mb-1">Event</label>
                 <select
+                  id="event-type-select"
+                  name="eventType"
                   className="w-full bg-[#151821] border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-indigo-500 outline-none"
                   value={eventType}
                   onChange={(e) => setEventType(e.target.value as any)}
@@ -103,9 +109,11 @@ export function MatchEvents({ fixture, homeTeam, awayTeam, onAddEvent, onRemoveE
               </div>
 
               <div className="md:col-span-1">
-                <label className="block text-xs text-gray-500 mb-1">Minute</label>
+                <label htmlFor="event-minute" className="block text-xs text-gray-500 mb-1">Minute</label>
                 <input
                   type="number"
+                  id="event-minute"
+                  name="minute"
                   min="0"
                   max="130"
                   className="w-full bg-[#151821] border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-indigo-500 outline-none"

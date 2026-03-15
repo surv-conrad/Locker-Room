@@ -13,6 +13,7 @@ import { cn } from '../utils';
 import { exportAsImage } from '../utils/exportImage';
 import { MatchEvents } from './MatchEvents';
 import { KnockoutBracket } from './KnockoutBracket';
+import { ConfirmModal } from './ConfirmModal';
 
 interface FixturesProps {
   fixtures: Fixture[];
@@ -32,7 +33,9 @@ interface FixturesProps {
   onAddMatchEvent: (fixtureId: string, event: Omit<MatchEvent, 'id'>) => void;
   onRemoveMatchEvent: (fixtureId: string, eventId: string) => void;
   onReorderFixtures: (matchday: number, fixtures: Fixture[]) => void;
+  onMoveFixture: (fixture: Fixture, targetMatchday: number, targetOrder: number) => void;
   onReassignFixturesFromMatchday: (matchday: number, selectedFixtureIds: string[]) => void;
+  onRescheduleFixtures: () => void;
   matchFilter: 'all' | 'hide_past' | 'current';
   nameDisplay: 'team' | 'player';
 }
@@ -51,7 +54,10 @@ export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingF
       <div className={cn("text-center text-xs py-1.5 font-medium flex justify-between px-2 rounded-t-xl", pillColor)}>
         {editingFixtureId === fixture.id ? (
           <div className="flex items-center gap-1 w-full">
+            <label htmlFor={`pitch-${fixture.id}`} className="sr-only">Pitch</label>
             <select 
+              id={`pitch-${fixture.id}`}
+              name={`pitch-${fixture.id}`}
               className="bg-[#1A1D24] border border-gray-700 rounded px-1 py-0.5 text-[10px] text-white max-w-[80px]"
               defaultValue={fixture.pitchId}
               onChange={(e) => onUpdateFixtureDetails(fixture.id, { pitchId: e.target.value })}
@@ -60,7 +66,10 @@ export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingF
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
+            <label htmlFor={`matchday-${fixture.id}`} className="sr-only">Matchday</label>
             <input 
+              id={`matchday-${fixture.id}`}
+              name={`matchday-${fixture.id}`}
               type="number" 
               min="1"
               className="bg-[#1A1D24] border border-gray-700 rounded px-1 py-0.5 text-[10px] text-white w-[40px]"
@@ -68,13 +77,19 @@ export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingF
               onChange={(e) => onUpdateFixtureDetails(fixture.id, { matchday: parseInt(e.target.value) })}
               title="Matchday"
             />
+            <label htmlFor={`date-${fixture.id}`} className="sr-only">Date</label>
             <input 
+              id={`date-${fixture.id}`}
+              name={`date-${fixture.id}`}
               type="date" 
               className="bg-[#1A1D24] border border-gray-700 rounded px-1 py-0.5 text-[10px] text-white w-[80px]"
               defaultValue={fixture.date}
               onChange={(e) => onUpdateFixtureDetails(fixture.id, { date: e.target.value })}
             />
+            <label htmlFor={`time-${fixture.id}`} className="sr-only">Time</label>
             <input 
+              id={`time-${fixture.id}`}
+              name={`time-${fixture.id}`}
               type="time" 
               className="bg-[#1A1D24] border border-gray-700 rounded px-1 py-0.5 text-[10px] text-white w-[60px]"
               defaultValue={fixture.time}
@@ -133,7 +148,10 @@ export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingF
         homeWon ? "bg-emerald-500/10 text-emerald-400" : (fixture.isPlayed ? "bg-transparent text-gray-400" : "bg-transparent text-gray-200")
       )}>
         <span className="font-medium text-sm truncate pr-2">{getTeamName(fixture.homeTeamId)}</span>
+        <label htmlFor={`homeScore-${fixture.id}`} className="sr-only">Home Score</label>
         <input
+          id={`homeScore-${fixture.id}`}
+          name={`homeScore-${fixture.id}`}
           type="number"
           min="0"
           disabled={!fixture.isStarted || fixture.isPlayed || !isAdmin}
@@ -152,7 +170,10 @@ export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingF
         awayWon ? "bg-emerald-500/10 text-emerald-400" : (fixture.isPlayed ? "bg-transparent text-gray-400" : "bg-transparent text-gray-200")
       )}>
         <span className="font-medium text-sm truncate pr-2">{getTeamName(fixture.awayTeamId)}</span>
+        <label htmlFor={`awayScore-${fixture.id}`} className="sr-only">Away Score</label>
         <input
+          id={`awayScore-${fixture.id}`}
+          name={`awayScore-${fixture.id}`}
           type="number"
           min="0"
           disabled={!fixture.isStarted || fixture.isPlayed || !isAdmin}
@@ -169,7 +190,7 @@ export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingF
   );
 }
 
-export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerateFixtures, onGenerateKnockoutFixtures, onUpdateFixture, onUpdateFixtureDetails, onUpdateMatchdayDate, onToggleFixtureStarted, onToggleFixturePlayed, onAddGroup, onEditTeam, onAddMatchEvent, onRemoveMatchEvent, onReorderFixtures, onReassignFixturesFromMatchday, matchFilter, nameDisplay }: FixturesProps) {
+export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerateFixtures, onGenerateKnockoutFixtures, onUpdateFixture, onUpdateFixtureDetails, onUpdateMatchdayDate, onToggleFixtureStarted, onToggleFixturePlayed, onAddGroup, onEditTeam, onAddMatchEvent, onRemoveMatchEvent, onReorderFixtures, onMoveFixture, onReassignFixturesFromMatchday, onRescheduleFixtures, matchFilter, nameDisplay }: FixturesProps) {
   const [stage, setStage] = useState<'group' | 'knockout'>('group');
   const [viewMode, setViewMode] = useState<'list' | 'bracket'>('list');
   const [selectedGroup, setSelectedGroup] = useState<string>('all');
@@ -186,6 +207,21 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
     newAwayScore: number | null;
     goalsToAdd: number;
   } | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText: string;
+    confirmStyle: 'danger' | 'warning' | 'primary';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    confirmText: 'Confirm',
+    confirmStyle: 'danger',
+    onConfirm: () => {}
+  });
   
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -402,14 +438,44 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                 </>
               )}
               {isAdmin && (
-                <button onClick={() => {
-                    if (fixtures.length > 0 && !window.confirm('Are you sure you want to regenerate fixtures? All current results will be lost.')) return;
-                    onGenerateFixtures();
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all duration-200 text-sm shadow-md shadow-indigo-900/20"
-                >
-                  <RefreshCw className="w-4 h-4" /> {fixtures.length > 0 ? 'Regenerate' : 'Generate'}
-                </button>
+                <>
+                  <button onClick={() => {
+                      if (fixtures.length > 0) {
+                        setConfirmModal({
+                          isOpen: true,
+                          title: 'Regenerate Fixtures',
+                          message: 'Are you sure you want to regenerate fixtures? All current results will be lost.',
+                          confirmText: 'Regenerate',
+                          confirmStyle: 'danger',
+                          onConfirm: onGenerateFixtures
+                        });
+                      } else {
+                        onGenerateFixtures();
+                      }
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all duration-200 text-sm shadow-md shadow-indigo-900/20"
+                  >
+                    <RefreshCw className="w-4 h-4" /> {fixtures.length > 0 ? 'Regenerate' : 'Generate'}
+                  </button>
+                  {fixtures.length > 0 && (
+                    <button 
+                      onClick={() => {
+                        setConfirmModal({
+                          isOpen: true,
+                          title: 'Recalculate Schedule',
+                          message: 'This will recalculate the schedule for all unplayed matches based on current settings. Manual overrides on unplayed days may be shifted. Continue?',
+                          confirmText: 'Recalculate',
+                          confirmStyle: 'warning',
+                          onConfirm: onRescheduleFixtures
+                        });
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 bg-amber-600/10 border border-amber-500/30 text-amber-400 rounded-xl hover:bg-amber-600/20 transition-all duration-200 text-sm shadow-sm"
+                      title="Recalculate schedule for unplayed matches"
+                    >
+                      <RefreshCw className="w-4 h-4" /> Recalculate
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -419,84 +485,95 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
               <p className="text-gray-500">No fixtures generated yet. Click the button above to create the schedule.</p>
             </div>
           ) : (
-            <div ref={fixturesRef} className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 p-4 bg-[#0B0E14]">
-              {matchdays.map((day, index) => {
-                let dayFixtures = fixtures.filter(f => f.matchday === day);
-                
-                if (stage === 'group' && selectedGroup !== 'all') {
-                  dayFixtures = dayFixtures.filter(f => f.groupId === selectedGroup);
-                }
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(e) => {
+              const { active, over } = e;
+              if (!over) return;
+              
+              const activeFixture = fixtures.find(f => f.id === active.id);
+              const overFixture = fixtures.find(f => f.id === over.id);
+              
+              if (activeFixture && overFixture && activeFixture.id !== overFixture.id) {
+                onMoveFixture(activeFixture, overFixture.matchday, overFixture.order || 0);
+              }
+            }}>
+              <div ref={fixturesRef} className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 p-4 bg-[#0B0E14]">
+                {matchdays.map((day, index) => {
+                  let dayFixtures = fixtures.filter(f => f.matchday === day);
+                  
+                  if (stage === 'group' && selectedGroup !== 'all') {
+                    dayFixtures = dayFixtures.filter(f => f.groupId === selectedGroup);
+                  }
 
-                if (matchFilter === 'hide_past') {
-                  dayFixtures = dayFixtures.filter(f => !f.isPlayed);
-                } else if (matchFilter === 'current') {
-                  // Just show the first matchday that has unplayed matches
-                  const firstUnplayedDay = matchdays.find(d => fixtures.filter(f => f.matchday === d).some(f => !f.isPlayed));
-                  if (day !== firstUnplayedDay) return null;
-                }
+                  if (matchFilter === 'hide_past') {
+                    dayFixtures = dayFixtures.filter(f => !f.isPlayed);
+                  } else if (matchFilter === 'current') {
+                    const firstUnplayedDay = matchdays.find(d => fixtures.filter(f => f.matchday === d).some(f => !f.isPlayed));
+                    if (day !== firstUnplayedDay) return null;
+                  }
 
-                if (dayFixtures.length === 0) return null;
+                  if (dayFixtures.length === 0) return null;
 
-                const isFirst = index === 0;
-                const matchdayDate = dayFixtures[0]?.date;
-                
-                return (
-                  <div key={day} className={cn(
-                    "bg-[#151821]/80 backdrop-blur-md rounded-2xl p-5 shadow-lg",
-                    isFirst ? "border-2 border-indigo-500/50 shadow-[0_0_20px_rgba(99,102,241,0.15)]" : "border border-gray-800/50"
-                  )}>
-                    <div className="flex items-center justify-between mb-5">
-                      <div className="flex items-center gap-2">
-                        {isAdmin && (
-                          <button 
-                            onClick={() => {
-                              setManagingMatchday(day);
-                              setSelectedForDay(dayFixtures.map(f => f.id));
-                            }}
-                            className="text-gray-500 hover:text-indigo-400 transition-colors"
-                            title="Manage Matches for this Day"
-                          >
-                            <List className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                        <h3 className="text-center font-semibold text-gray-200 flex items-center gap-2 text-lg">
-                          Round {day.toString().padStart(2, '0')}
-                        </h3>
-                      </div>
-                      {editingMatchday === day && isAdmin ? (
+                  const isFirst = index === 0;
+                  const matchdayDate = dayFixtures[0]?.date;
+                  
+                  return (
+                    <div key={day} className={cn(
+                      "bg-[#151821]/80 backdrop-blur-md rounded-2xl p-5 shadow-lg",
+                      isFirst ? "border-2 border-indigo-500/50 shadow-[0_0_20px_rgba(99,102,241,0.15)]" : "border border-gray-800/50"
+                    )}>
+                      <div className="flex items-center justify-between mb-5">
                         <div className="flex items-center gap-2">
-                          <input 
-                            type="date" 
-                            className="bg-[#1A1D24] border border-gray-700 rounded px-2 py-1 text-xs text-white"
-                            defaultValue={matchdayDate}
-                            onBlur={(e) => {
-                              onUpdateMatchdayDate(day, e.target.value);
-                              setEditingMatchday(null);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                onUpdateMatchdayDate(day, e.currentTarget.value);
-                                setEditingMatchday(null);
-                              }
-                            }}
-                            autoFocus
-                          />
+                          {isAdmin && (
+                            <button 
+                              onClick={() => {
+                                setManagingMatchday(day);
+                                setSelectedForDay(dayFixtures.map(f => f.id));
+                              }}
+                              className="text-gray-500 hover:text-indigo-400 transition-colors"
+                              title="Manage Matches for this Day"
+                            >
+                              <List className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <h3 className="text-center font-semibold text-gray-200 flex items-center gap-2 text-lg">
+                            Round {day.toString().padStart(2, '0')}
+                          </h3>
                         </div>
-                      ) : (
-                        isAdmin && (
-                          <button 
-                            onClick={() => setEditingMatchday(day)}
-                            className="text-gray-500 hover:text-indigo-400 transition-colors"
-                            title="Edit Matchday Date"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                        )
-                      )}
-                    </div>
-                    
-                    <div className="space-y-4">
-                      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(e) => handleDragEnd(e, day, dayFixtures)}>
+                        {editingMatchday === day && isAdmin ? (
+                          <div className="flex items-center gap-2">
+                            <input 
+                              id={`matchday-date-${day}`}
+                              name={`matchday-date-${day}`}
+                              type="date" 
+                              className="bg-[#1A1D24] border border-gray-700 rounded px-2 py-1 text-xs text-white"
+                              defaultValue={matchdayDate}
+                              onBlur={(e) => {
+                                onUpdateMatchdayDate(day, e.target.value);
+                                setEditingMatchday(null);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  onUpdateMatchdayDate(day, e.currentTarget.value);
+                                  setEditingMatchday(null);
+                                }
+                              }}
+                              autoFocus
+                            />
+                          </div>
+                        ) : (
+                          isAdmin && (
+                            <button 
+                              onClick={() => setEditingMatchday(day)}
+                              className="text-gray-500 hover:text-indigo-400 transition-colors"
+                              title="Edit Matchday Date"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )
+                        )}
+                      </div>
+                      
+                      <div className="space-y-4">
                         <SortableContext items={dayFixtures.map(f => f.id)} strategy={verticalListSortingStrategy}>
                           {dayFixtures.map((fixture, fIndex) => (
                             <SortableFixtureRow 
@@ -520,12 +597,12 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                             />
                           ))}
                         </SortableContext>
-                      </DndContext>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            </DndContext>
           )}
         </>
       ) : (
@@ -579,9 +656,17 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
               <button 
                 onClick={() => {
                   if (fixtures.filter(f => f.matchday < 100 && !f.isPlayed).length > 0) {
-                    if (!window.confirm('Some group stage matches are not played yet. Are you sure you want to generate knockout fixtures?')) return;
+                    setConfirmModal({
+                      isOpen: true,
+                      title: 'Generate Knockout Fixtures',
+                      message: 'Some group stage matches are not played yet. Are you sure you want to generate knockout fixtures?',
+                      confirmText: 'Generate',
+                      confirmStyle: 'warning',
+                      onConfirm: onGenerateKnockoutFixtures
+                    });
+                  } else {
+                    onGenerateKnockoutFixtures();
                   }
-                  onGenerateKnockoutFixtures();
                 }}
                 className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all duration-200 text-sm shadow-md shadow-indigo-900/20"
               >
@@ -671,6 +756,8 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                                     ))}
                                   </select>
                                   <input 
+                                    id={`knockout-date-${fixture.id}`}
+                                    name={`knockout-date-${fixture.id}`}
                                     type="date" 
                                     className="bg-[#1A1D24] border border-gray-700 rounded px-1 py-0.5 text-[10px] text-white w-[80px]"
                                     defaultValue={fixture.date}
@@ -726,9 +813,11 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                             )}>
                               <span className="font-medium text-sm truncate pr-2">{getTeamName(fixture.homeTeamId)}</span>
                               <input
+                                id={`knockout-homeScore-${fixture.id}`}
+                                name={`knockout-homeScore-${fixture.id}`}
                                 type="number"
                                 min="0"
-                                disabled={!fixture.isStarted || fixture.isPlayed}
+                                disabled={!fixture.isStarted || fixture.isPlayed || !isAdmin}
                                 className="w-12 bg-black/20 text-right font-bold outline-none focus:bg-black/40 focus:ring-1 focus:ring-indigo-500/50 rounded-md px-2 py-1 transition-all disabled:opacity-50"
                                 value={isNaN(fixture.homeScore as number) ? '' : (fixture.homeScore ?? '')}
                                 onChange={(e) => {
@@ -745,9 +834,11 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                             )}>
                               <span className="font-medium text-sm truncate pr-2">{getTeamName(fixture.awayTeamId)}</span>
                               <input
+                                id={`knockout-awayScore-${fixture.id}`}
+                                name={`knockout-awayScore-${fixture.id}`}
                                 type="number"
                                 min="0"
-                                disabled={!fixture.isStarted || fixture.isPlayed}
+                                disabled={!fixture.isStarted || fixture.isPlayed || !isAdmin}
                                 className="w-12 bg-black/20 text-right font-bold outline-none focus:bg-black/40 focus:ring-1 focus:ring-indigo-500/50 rounded-md px-2 py-1 transition-all disabled:opacity-50"
                                 value={fixture.awayScore ?? ''}
                                 onChange={(e) => {
@@ -931,6 +1022,15 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
           </div>
         </div>
       )}
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        confirmText={confirmModal.confirmText}
+        confirmStyle={confirmModal.confirmStyle}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 }

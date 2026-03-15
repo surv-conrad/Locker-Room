@@ -8,8 +8,8 @@ export function UserManual() {
       icon: Shield,
       content: [
         'Locker Room uses Role-Based Access Control (RBAC) to ensure data security.',
-        'Administrators: Can manage teams, groups, fixtures, and settings. They have full control over the tournament data.',
-        'Viewers: Can view fixtures, results, tables, and stats but cannot make any changes.',
+        'Administrators: Can manage teams, groups, fixtures, and settings. They have full control over the tournament data. The User Manual is only visible to administrators.',
+        'Viewers: Can view fixtures, results, tables, and stats but cannot make any changes. They cannot access administrative tools or this manual.',
         'Authentication: Sign in with your Google account to access the system.',
         'Super Admin: The creator of the tournament (or the designated super admin) will see a Shield icon in the top header. Clicking this opens the Admin Panel, where they can elevate other users from Viewer to Admin.'
       ]
@@ -29,6 +29,8 @@ export function UserManual() {
       icon: Calendar,
       content: [
         'Generation: Admins can generate the full tournament schedule with a single click. This includes group stage and knockout rounds.',
+        'Regenerate: Admins can completely regenerate the fixtures, but this will erase all current results.',
+        'Recalculate: Admins can recalculate the schedule for all unplayed matches based on current settings. This is useful if tournament settings (like matches per day or resting days) change.',
         'Match Control: Matches can be marked as "Ongoing" or "Finished". Only ongoing or finished matches can have scores and events recorded.',
         'Match Events: Record goals, cards, and other events during a match. These events automatically update player statistics.',
         'Filtering: Use the filters to show all matches, hide past matches, or focus on the current matchday.'

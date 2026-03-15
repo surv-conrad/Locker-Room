@@ -20,6 +20,7 @@ import { ComingSoonModal } from './components/ComingSoonModal';
 import { AdminPanel } from './components/AdminPanel';
 import { Settings as SettingsIcon, Users, CalendarDays, Trophy, Code2, ExternalLink, Sun, BarChart2, LogIn, LogOut, Loader2, Book, Shield, Download, Image as ImageIcon } from 'lucide-react';
 import { cn } from './utils';
+import { Settings } from './types';
 import { signInWithGoogle, logout } from './firebase';
 
 type Tab = 'table' | 'teams' | 'fixtures' | 'stats' | 'manual';
@@ -54,9 +55,11 @@ export default function App() {
     removeMatchEvent,
     getPlayerStats,
     reassignFixturesFromMatchday,
+    rescheduleFixtures,
     fillAllTeamSheetsWithTestData,
     reorderTeams,
     reorderFixtures,
+    moveFixture,
     toggleRole,
     loading,
     userId,
@@ -244,8 +247,27 @@ export default function App() {
     { id: 'table', label: 'League Table', icon: Trophy },
     { id: 'stats', label: 'Player Stats', icon: BarChart2 },
     { id: 'teams', label: 'Teams Database', icon: Users },
-    { id: 'manual', label: 'User Manual', icon: Book },
-  ] as const;
+    ...(isAdmin ? [{ id: 'manual', label: 'User Manual', icon: Book }] : []),
+  ];
+
+  const handleUpdateSettings = async (newSettings: Settings) => {
+    const oldSettings = settings;
+    await setSettings(newSettings);
+    
+    // Check if we should automatically reschedule
+    const matchesPerDayChanged = newSettings.matchdaySettings?.matchesPerDay !== oldSettings.matchdaySettings?.matchesPerDay;
+    const restingDaysChanged = newSettings.matchdaySettings?.restingDays !== oldSettings.matchdaySettings?.restingDays;
+    const customMatchdaysChanged = JSON.stringify(newSettings.matchdaySettings?.customMatchdays) !== JSON.stringify(oldSettings.matchdaySettings?.customMatchdays);
+    const startDateChanged = newSettings.startDate !== oldSettings.startDate;
+    const pitchesChanged = JSON.stringify(newSettings.pitches) !== JSON.stringify(oldSettings.pitches);
+
+    if (fixtures.length > 0 && (matchesPerDayChanged || restingDaysChanged || customMatchdaysChanged || startDateChanged || pitchesChanged)) {
+      // Small delay to ensure state is updated
+      setTimeout(() => {
+        rescheduleFixtures(newSettings);
+      }, 100);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#0B0E14] text-gray-100 font-sans flex selection:bg-indigo-500/30">
@@ -357,7 +379,7 @@ export default function App() {
               </button>
             )}
 
-            <button onClick={() => setActiveTab('manual')} className="hover:text-white transition-colors">More</button>
+            {isAdmin && <button onClick={() => setActiveTab('manual')} className="hover:text-white transition-colors">More</button>}
             <div className="w-px h-4 bg-gray-700" />
             <button onClick={() => handleNotImplemented('Light Mode')} className="p-1.5 rounded-md bg-gray-800 text-gray-300 hover:text-white border border-gray-700 transition-colors">
               <Sun className="w-4 h-4" />
@@ -463,8 +485,8 @@ export default function App() {
             </div>
 
             <div className="">
-              {activeTab === 'table' && <LeagueTable table={getLeagueTable()} fixtures={fixtures} groups={groups} />}
-              {activeTab === 'stats' && <PlayerStats stats={getPlayerStats()} />}
+              {activeTab === 'table' && <LeagueTable table={getLeagueTable()} fixtures={fixtures} groups={groups} isAdmin={isAdmin} />}
+              {activeTab === 'stats' && <PlayerStats stats={getPlayerStats()} isAdmin={isAdmin} />}
               {activeTab === 'teams' && (
                 <Teams 
                   teams={teams} 
@@ -500,7 +522,9 @@ export default function App() {
                   onAddMatchEvent={addMatchEvent}
                   onRemoveMatchEvent={removeMatchEvent}
                   onReorderFixtures={reorderFixtures}
+                  onMoveFixture={moveFixture}
                   onReassignFixturesFromMatchday={reassignFixturesFromMatchday}
+                  onRescheduleFixtures={rescheduleFixtures}
                   matchFilter={matchFilter}
                   nameDisplay={nameDisplay}
                 />
@@ -524,14 +548,14 @@ export default function App() {
       {/* Hidden containers for image exports */}
       <div style={{ position: 'absolute', left: '-9999px', top: '-9999px', pointerEvents: 'none' }}>
         <div ref={playerStatsExportRef} className="w-[1200px] bg-[#0B0E14] p-8 text-white">
-          <PlayerStats stats={getPlayerStats()} />
+          <PlayerStats stats={getPlayerStats()} isAdmin={isAdmin} />
         </div>
       </div>
 
       {isSettingsOpen && (
         <SettingsModal
           settings={settings}
-          onSave={setSettings}
+          onSave={handleUpdateSettings}
           onClose={() => setIsSettingsOpen(false)}
         />
       )}
@@ -543,7 +567,7 @@ export default function App() {
           groups={groups}
           tournamentId={settings.tournamentName || 'default-tournament'}
           userId={userId || ''}
-          onSave={setSettings}
+          onSave={handleUpdateSettings}
           onFillTeamSheets={fillAllTeamSheetsWithTestData}
           onClose={() => setIsTournamentManagementOpen(false)}
         />
