@@ -6,18 +6,21 @@ export const publishTournament = async (userId: string, tournamentId: string, to
   const publicRef = doc(db, 'public_tournaments', tournamentId);
   
   try {
-    // Fetch teams and fixtures to include in the public snapshot
+    // Fetch teams, fixtures, and groups to include in the public snapshot
     const teamsSnapshot = await getDocs(collection(db, `users/${userId}/teams`));
     const fixturesSnapshot = await getDocs(collection(db, `users/${userId}/fixtures`));
+    const groupsSnapshot = await getDocs(collection(db, `users/${userId}/groups`));
     
     const teams = teamsSnapshot.docs.map(doc => doc.data());
     const fixtures = fixturesSnapshot.docs.map(doc => doc.data());
+    const groups = groupsSnapshot.docs.map(doc => doc.data());
 
     await setDoc(publicRef, {
       ...tournamentData,
       ownerId: userId,
       teams,
       fixtures,
+      groups,
       publishedAt: new Date().toISOString()
     });
   } catch (error) {

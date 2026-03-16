@@ -5,7 +5,7 @@ import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSo
 import { CSS } from '@dnd-kit/utilities';
 import { Fixture, Team, Group, Settings, MatchEvent } from '../types';
 import { ModernSelect } from './ModernSelect';
-import { Calendar, RefreshCw, Download, Pencil, Trophy, X, Save, Activity, List, GitMerge, Image as ImageIcon } from 'lucide-react';
+import { Calendar, RefreshCw, Download, Pencil, Trophy, X, Save, Activity, List, GitMerge, Image as ImageIcon, Share2 } from 'lucide-react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -14,6 +14,7 @@ import { exportAsImage } from '../utils/exportImage';
 import { MatchEvents } from './MatchEvents';
 import { KnockoutBracket } from './KnockoutBracket';
 import { ConfirmModal } from './ConfirmModal';
+import { MatchCard } from './MatchCard';
 
 interface FixturesProps {
   fixtures: Fixture[];
@@ -40,7 +41,7 @@ interface FixturesProps {
   nameDisplay: 'team' | 'player';
 }
 
-export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingFixtureId, setEditingFixtureId, onUpdateFixture, onUpdateFixtureDetails, onToggleFixtureStarted, onToggleFixturePlayed, onAddMatchEvent, setSelectedFixtureForEvents, getTeamName, getPitchName, getGroupColor, handleScoreChange }: any) {
+export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingFixtureId, setEditingFixtureId, onUpdateFixture, onUpdateFixtureDetails, onToggleFixtureStarted, onToggleFixturePlayed, onAddMatchEvent, setSelectedFixtureForEvents, setSelectedFixtureForShare, getTeamName, getPitchName, getGroupColor, handleScoreChange }: any) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: fixture.id });
   const style = { transform: CSS.Transform.toString(transform), transition };
   
@@ -130,13 +131,22 @@ export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingF
                 </button>
               )}
               {(fixture.isStarted || fixture.isPlayed) && isAdmin && (
-                <button
-                  onClick={() => setSelectedFixtureForEvents(fixture)}
-                  className="text-xs text-gray-400 hover:text-white flex items-center gap-1 bg-gray-800/50 px-2 py-0.5 rounded border border-gray-700/50"
-                  title="Match Events"
-                >
-                  <Activity className="w-3 h-3" /> Events
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setSelectedFixtureForEvents(fixture)}
+                    className="text-xs text-gray-400 hover:text-white flex items-center gap-1 bg-gray-800/50 px-2 py-0.5 rounded border border-gray-700/50"
+                    title="Match Events"
+                  >
+                    <Activity className="w-3 h-3" /> Events
+                  </button>
+                  <button
+                    onClick={() => setSelectedFixtureForShare(fixture)}
+                    className="text-xs text-indigo-400 hover:text-white flex items-center gap-1 bg-indigo-900/20 px-2 py-0.5 rounded border border-indigo-500/30"
+                    title="Share Result"
+                  >
+                    <Share2 className="w-3 h-3" /> Share
+                  </button>
+                </div>
               )}
             </div>
           </>
@@ -197,6 +207,7 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
   const [editingMatchday, setEditingMatchday] = useState<number | null>(null);
   const [editingFixtureId, setEditingFixtureId] = useState<string | null>(null);
   const [selectedFixtureForEvents, setSelectedFixtureForEvents] = useState<Fixture | null>(null);
+  const [selectedFixtureForShare, setSelectedFixtureForShare] = useState<Fixture | null>(null);
   const [managingMatchday, setManagingMatchday] = useState<number | null>(null);
   const fixturesRef = useRef<HTMLDivElement>(null);
   const [selectedForDay, setSelectedForDay] = useState<string[]>([]);
@@ -590,6 +601,7 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                               onToggleFixturePlayed={onToggleFixturePlayed} 
                               onAddMatchEvent={onAddMatchEvent} 
                               setSelectedFixtureForEvents={setSelectedFixtureForEvents} 
+                              setSelectedFixtureForShare={setSelectedFixtureForShare}
                               getTeamName={getTeamName} 
                               getPitchName={getPitchName} 
                               getGroupColor={getGroupColor} 
@@ -869,6 +881,63 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
           onRemoveEvent={onRemoveMatchEvent}
           onClose={() => setSelectedFixtureForEvents(null)}
         />
+      )}
+
+      {selectedFixtureForShare && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[60] p-4 overflow-y-auto">
+          <div className="bg-[#151821] rounded-3xl shadow-2xl w-full max-w-4xl border border-gray-800/50 flex flex-col my-auto">
+            <div className="flex justify-between items-center p-6 border-b border-gray-800/50">
+              <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+                <Share2 className="w-5 h-5 text-indigo-400" /> Share Match Result
+              </h2>
+              <button onClick={() => setSelectedFixtureForShare(null)} className="text-gray-400 hover:text-gray-200 transition-colors p-2 hover:bg-gray-800/50 rounded-full">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-8 flex flex-col items-center gap-8">
+              <div className="relative group">
+                {/* Preview Container - Scaled down for UI */}
+                <div className="scale-[0.4] origin-top transform-gpu shadow-2xl rounded-[40px] overflow-hidden">
+                  <MatchCard 
+                    id="match-card-preview"
+                    fixture={selectedFixtureForShare}
+                    teams={teams}
+                    settings={settings}
+                  />
+                </div>
+                {/* Overlay to prevent interaction with the preview */}
+                <div className="absolute inset-0 z-10" />
+              </div>
+
+              <div className="flex flex-col items-center gap-4 text-center max-w-md">
+                <h3 className="text-lg font-bold text-white">Ready to Share!</h3>
+                <p className="text-sm text-gray-400">
+                  This card is formatted for Instagram, WhatsApp, and other social platforms. 
+                  Download the high-resolution image below.
+                </p>
+              </div>
+
+              <div className="flex gap-4 w-full max-w-md">
+                <button
+                  onClick={async () => {
+                    const el = document.getElementById('match-card-preview');
+                    await exportAsImage(el, `match-${selectedFixtureForShare.id}-result`);
+                  }}
+                  className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black uppercase tracking-widest transition-all flex items-center justify-center gap-3 shadow-lg shadow-indigo-900/40"
+                >
+                  <Download className="w-5 h-5" /> Download Image
+                </button>
+                <button
+                  onClick={() => setSelectedFixtureForShare(null)}
+                  className="px-8 py-4 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-2xl font-black uppercase tracking-widest transition-all"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {managingMatchday !== null && (

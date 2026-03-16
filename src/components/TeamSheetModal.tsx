@@ -9,13 +9,26 @@ import { exportAsImage } from '../utils/exportImage';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../firebase';
 
-const PlayerPhoto = ({ player, className }: { player: Player, className?: string }) => {
-  if (player.photoUrl && !player.photoUrl.includes('pravatar.cc')) {
-    return <img src={player.photoUrl} alt={player.name} className={cn("object-cover", className)} referrerPolicy="no-referrer" />;
-  }
+const PlayerPhoto = ({ player, className, onClick, isAdmin }: { player: Player, className?: string, onClick?: (e: React.MouseEvent) => void, isAdmin?: boolean }) => {
+  const defaultPhoto = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=100&auto=format&fit=crop';
+  const photoUrl = player.photoUrl || defaultPhoto;
+  
   return (
-    <div className={cn("bg-indigo-600 flex items-center justify-center text-white font-black italic font-display text-3xl", className)}>
-      {player.name ? player.name.charAt(0).toUpperCase() : '?'}
+    <div 
+      className={cn("relative group overflow-hidden", isAdmin && "cursor-pointer", className)}
+      onClick={isAdmin ? (e) => onClick?.(e) : undefined}
+    >
+      <img 
+        src={photoUrl} 
+        alt={player.name} 
+        className="w-full h-full object-cover" 
+        referrerPolicy="no-referrer" 
+      />
+      {isAdmin && (
+        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+          <Camera className="w-1/2 h-1/2 text-white/80" />
+        </div>
+      )}
     </div>
   );
 };
@@ -38,6 +51,8 @@ export function TeamSheetModal({ team, settings, isAdmin, onSave, onClose }: Tea
   const [photoUrl, setPhotoUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'pitch'>('pitch');
+  const [updatingPlayerId, setUpdatingPlayerId] = useState<string | null>(null);
+  const playerPhotoInputRef = useRef<HTMLInputElement>(null);
   const { setExportOptions } = useExport();
 
   useEffect(() => {
@@ -241,6 +256,31 @@ export function TeamSheetModal({ team, settings, isAdmin, onSave, onClose }: Tea
     }
   };
 
+  const handlePlayerPhotoUpdate = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !updatingPlayerId) return;
+
+    try {
+      const storageRef = ref(storage, `player-photos/${generateId()}-${file.name}`);
+      const snapshot = await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(snapshot.ref);
+      
+      const updatedPlayers = players.map(p => 
+        p.id === updatingPlayerId ? { ...p, photoUrl: url } : p
+      );
+      setPlayers(updatedPlayers);
+      onSave(team.id, { players: updatedPlayers });
+      setUpdatingPlayerId(null);
+    } catch (err: any) {
+      console.error('Player photo upload failed', err);
+      if (err.code === 'storage/unauthorized' || err.message?.includes('CORS')) {
+        setError('Upload blocked by CORS policy. Please ensure Firebase Storage CORS is configured.');
+      } else {
+        setError('Failed to update player photo. Please try again.');
+      }
+    }
+  };
+
   const handleAddPlayer = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name) return;
@@ -396,7 +436,16 @@ export function TeamSheetModal({ team, settings, isAdmin, onSave, onClose }: Tea
   });
 
   return (
-    <div className="fixed inset-0 bg-black/95 backdrop-blur-xl flex items-center justify-center z-50 p-4 font-sans overflow-hidden">
+    <>
+      {/* Hidden input for player photo updates */}
+      <input 
+        type="file" 
+        ref={playerPhotoInputRef} 
+        className="hidden" 
+        accept="image/*"
+        onChange={handlePlayerPhotoUpdate}
+      />
+      <div className="fixed inset-0 bg-black/95 backdrop-blur-xl flex items-center justify-center z-50 p-4 font-sans overflow-hidden">
       {/* Background Decorative Elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none opacity-20">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-indigo-600/30 blur-[120px] rounded-full" />
@@ -667,7 +716,16 @@ export function TeamSheetModal({ team, settings, isAdmin, onSave, onClose }: Tea
                             <td className="px-8 py-4">
                               <div className="flex items-center gap-4">
                                 <div className="relative">
-                                  <img src={player.photoUrl} alt="" className="w-12 h-12 rounded-2xl object-cover border-2 border-white/10 group-hover:border-indigo-500 transition-colors" referrerPolicy="no-referrer" />
+                                  <PlayerPhoto 
+                                    player={player} 
+                                    isAdmin={isAdmin}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setUpdatingPlayerId(player.id);
+                                      playerPhotoInputRef.current?.click();
+                                    }}
+                                    className="w-12 h-12 rounded-2xl border-2 border-white/10 group-hover:border-indigo-500 transition-colors" 
+                                  />
                                   {!player.isActive && <div className="absolute inset-0 bg-black/60 rounded-2xl flex items-center justify-center"><span className="text-[8px] font-black text-white/40 uppercase">BENCH</span></div>}
                                 </div>
                                 <div>
@@ -892,12 +950,28 @@ export function TeamSheetModal({ team, settings, isAdmin, onSave, onClose }: Tea
                             }
                           }}
                         >
-                          <PlayerPhoto player={player} className="w-full h-full opacity-90 mix-blend-luminosity" />
+                          <PlayerPhoto 
+                            player={player} 
+                            className="w-full h-full" 
+                          />
                           <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/80 to-transparent" />
                           {isAdmin && (
-                            <div className="absolute inset-0 bg-indigo-600/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm">
-                              <RefreshCw className="w-8 h-8 text-white animate-spin-slow" />
-                            </div>
+                            <>
+                              <div className="absolute inset-0 bg-indigo-600/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm">
+                                <RefreshCw className="w-8 h-8 text-white animate-spin-slow" />
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setUpdatingPlayerId(player.id);
+                                  playerPhotoInputRef.current?.click();
+                                }}
+                                className="absolute top-1 right-1 p-1 bg-black/60 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity z-20 hover:bg-indigo-500"
+                                title="Change Photo"
+                              >
+                                <Camera className="w-3 h-3 text-white" />
+                              </button>
+                            </>
                           )}
                         </div>
 
@@ -954,7 +1028,16 @@ export function TeamSheetModal({ team, settings, isAdmin, onSave, onClose }: Tea
                             className="group bg-white/[0.03] hover:bg-indigo-600 border border-white/10 hover:border-indigo-400 rounded-3xl p-4 flex flex-col items-center gap-3 transition-all shadow-xl"
                           >
                             <div className="relative">
-                              <PlayerPhoto player={p} className="w-16 h-16 rounded-2xl border-2 border-white/10 group-hover:border-white/40" />
+                              <PlayerPhoto 
+                                player={p} 
+                                isAdmin={isAdmin}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setUpdatingPlayerId(p.id);
+                                  playerPhotoInputRef.current?.click();
+                                }}
+                                className="w-16 h-16 rounded-2xl border-2 border-white/10 group-hover:border-white/40" 
+                              />
                               <div className="absolute -bottom-2 -right-2 bg-indigo-500 text-white text-[10px] font-black w-6 h-6 flex items-center justify-center rounded-lg border-2 border-black italic font-display">
                                 {p.number}
                               </div>
@@ -1010,5 +1093,6 @@ export function TeamSheetModal({ team, settings, isAdmin, onSave, onClose }: Tea
         </div>
       </div>
     </div>
+    </>
   );
 }

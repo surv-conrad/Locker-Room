@@ -11,9 +11,21 @@ interface ShareModalProps {
   tournamentId: string;
   onClose: () => void;
   exportOptions?: ExportOption[];
+  lastPublished?: string | null;
+  isPublishing?: boolean;
+  onPublish?: () => Promise<void>;
+  isAdmin?: boolean;
 }
 
-export function ShareModal({ tournamentId, onClose, exportOptions }: ShareModalProps) {
+export function ShareModal({ 
+  tournamentId, 
+  onClose, 
+  exportOptions,
+  lastPublished,
+  isPublishing,
+  onPublish,
+  isAdmin
+}: ShareModalProps) {
   const [copied, setCopied] = useState(false);
   const shareLink = `${window.location.origin}/?tournamentId=${tournamentId}`;
 
@@ -44,7 +56,46 @@ export function ShareModal({ tournamentId, onClose, exportOptions }: ShareModalP
           </button>
         </div>
         
-        <div className="p-6">
+        <div className="p-6 space-y-6 overflow-y-auto max-h-[80vh] custom-scrollbar">
+          {isAdmin && (
+            <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-indigo-400">
+                  <Share2 className="w-4 h-4" />
+                  <span className="text-sm font-medium">Public Status</span>
+                </div>
+                {lastPublished ? (
+                  <span className="text-[10px] text-gray-400">
+                    Last published: {new Date(lastPublished).toLocaleString()}
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-amber-400">Not published yet</span>
+                )}
+              </div>
+              <p className="text-xs text-gray-400 leading-relaxed">
+                Match results, goals, and events are now updated <strong>live</strong> for viewers. 
+                Publishing is only required to sync structural changes like team names, groups, or tournament settings.
+              </p>
+              <button
+                onClick={onPublish}
+                disabled={isPublishing}
+                className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2"
+              >
+                {isPublishing ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Publishing...
+                  </>
+                ) : (
+                  <>
+                    <Share2 className="w-4 h-4" />
+                    {lastPublished ? 'Update Public View' : 'Publish to Web'}
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
           <div className="space-y-3">
             {allExportOptions.map((option, index) => (
               <button

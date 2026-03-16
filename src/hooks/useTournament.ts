@@ -79,6 +79,39 @@ export function useTournament(publicTournamentId?: string) {
     throw new Error(JSON.stringify(errInfo));
   };
 
+  const [lastPublished, setLastPublished] = useState<string | null>(null);
+  const [isPublishing, setIsPublishing] = useState(false);
+
+  const publish = async () => {
+    if (!userId || !isAdmin) return;
+    setIsPublishing(true);
+    try {
+      const { publishTournament } = await import('../services/tournamentService');
+      await publishTournament(userId, userId, {
+        ...settings,
+        publishedAt: new Date().toISOString()
+      });
+      setLastPublished(new Date().toISOString());
+    } catch (error) {
+      console.error('Publish failed', error);
+      throw error;
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!userId || publicTournamentId) return;
+    
+    const unsubPublic = onSnapshot(doc(db, 'public_tournaments', userId), (snapshot) => {
+      if (snapshot.exists()) {
+        setLastPublished(snapshot.data().publishedAt || null);
+      }
+    });
+    
+    return () => unsubPublic();
+  }, [userId, publicTournamentId]);
+
   const isAdmin = userRole === 'admin';
   const isSuperAdmin = auth?.currentUser?.email === 'conradenock@gmail.com';
 
@@ -106,21 +139,64 @@ export function useTournament(publicTournamentId?: string) {
   useEffect(() => {
     if (publicTournamentId) {
       setLoading(true);
-      const unsub = onSnapshot(doc(db, 'public_tournaments', publicTournamentId), (snapshot) => {
+      setUserRole('viewer');
+      setUserId(publicTournamentId); // Always set userId for viewers
+
+      let unsubLiveSettings = () => {};
+
+      // Load base settings and structure from public snapshot
+      const unsubSnapshot = onSnapshot(doc(db, 'public_tournaments', publicTournamentId), (snapshot) => {
         if (snapshot.exists()) {
           const data = snapshot.data();
-          setTeams(data.teams || []);
-          setFixtures(data.fixtures || []);
           _setSettings(data as Settings);
-          setGroups(data.groups || []);
-          setUserRole('viewer');
+          unsubLiveSettings(); // Stop listening to live settings if public snapshot exists
+        } else {
+          // If not published yet, try to load settings from the live path
+          // This allows the link to work even if "Publish" wasn't clicked
+          unsubLiveSettings = onSnapshot(doc(db, `users/${publicTournamentId}/settings/current`), (settingsSnap) => {
+            if (settingsSnap.exists()) {
+              _setSettings(settingsSnap.data() as Settings);
+            }
+          });
         }
         setLoading(false);
       });
-      return () => unsub();
+
+      // Listen to live fixtures for real-time match updates (goals, status, events)
+      const unsubFixtures = onSnapshot(collection(db, `users/${publicTournamentId}/fixtures`), (snapshot) => {
+        const f = snapshot.docs.map(doc => doc.data() as Fixture);
+        setFixtures(f.sort((a, b) => {
+          if (a.matchday !== b.matchday) return a.matchday - b.matchday;
+          return (a.order || 0) - (b.order || 0);
+        }));
+      });
+
+      // Listen to live teams for real-time player and team updates
+      const unsubTeams = onSnapshot(collection(db, `users/${publicTournamentId}/teams`), (snapshot) => {
+        setTeams(snapshot.docs.map(doc => doc.data() as Team));
+      });
+
+      // Listen to live groups
+      const unsubGroups = onSnapshot(collection(db, `users/${publicTournamentId}/groups`), (snapshot) => {
+        setGroups(snapshot.docs.map(doc => doc.data() as Group));
+      });
+
+      return () => {
+        unsubSnapshot();
+        unsubLiveSettings();
+        unsubFixtures();
+        unsubTeams();
+        unsubGroups();
+      };
     }
 
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
+      // If we are in public viewer mode, don't let auth state overwrite the userId
+      if (publicTournamentId) {
+        setLoading(false);
+        return;
+      }
+
       setUserId(user?.uid || null);
       if (user) {
         // Initialize user profile if it doesn't exist
@@ -1488,6 +1564,9 @@ export function useTournament(publicTournamentId?: string) {
     reorderFixtures,
     moveFixture,
     toggleRole,
+    publish,
+    lastPublished,
+    isPublishing,
     loading,
     userId,
     isAdmin,

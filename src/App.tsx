@@ -61,6 +61,9 @@ export default function App() {
     reorderFixtures,
     moveFixture,
     toggleRole,
+    publish,
+    lastPublished,
+    isPublishing,
     loading,
     userId,
     isAdmin,
@@ -80,6 +83,14 @@ export default function App() {
   const [nameDisplay, setNameDisplay] = useState<'team' | 'player'>('team');
 
   const playerStatsExportRef = useRef<HTMLDivElement>(null);
+
+  const handlePublish = async () => {
+    try {
+      await publish();
+    } catch (err) {
+      alert('Failed to publish tournament.');
+    }
+  };
 
   const handleExportLeagueTablePDF = () => {
     import('jspdf').then(({ default: jsPDF }) => {
@@ -539,9 +550,13 @@ export default function App() {
       {/* Settings Modal */}
       {isShareOpen && (
         <ShareModal
-          tournamentId={publicTournamentId || settings.tournamentName || 'default'}
+          tournamentId={userId || publicTournamentId || ''}
           onClose={() => setIsShareOpen(false)}
           exportOptions={[...exportOptions, ...globalExportOptions]}
+          lastPublished={lastPublished}
+          isPublishing={isPublishing}
+          onPublish={handlePublish}
+          isAdmin={isAdmin}
         />
       )}
 
@@ -565,9 +580,11 @@ export default function App() {
           settings={settings}
           teams={teams}
           groups={groups}
-          tournamentId={settings.tournamentName || 'default-tournament'}
+          tournamentId={userId || ''}
           userId={userId || ''}
           onSave={handleUpdateSettings}
+          onPublish={handlePublish}
+          isPublishing={isPublishing}
           onFillTeamSheets={fillAllTeamSheetsWithTestData}
           onClose={() => setIsTournamentManagementOpen(false)}
         />

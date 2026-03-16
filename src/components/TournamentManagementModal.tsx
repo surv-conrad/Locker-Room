@@ -11,34 +11,36 @@ interface TournamentManagementModalProps {
   tournamentId: string;
   userId: string;
   onSave: (settings: Settings) => void;
+  onPublish?: () => Promise<void>;
+  isPublishing?: boolean;
   onFillTeamSheets?: () => void;
   onClose: () => void;
 }
 
-export function TournamentManagementModal({ settings, teams = [], groups = [], tournamentId, userId, onSave, onFillTeamSheets, onClose }: TournamentManagementModalProps) {
+export function TournamentManagementModal({ 
+  settings, 
+  teams = [], 
+  groups = [], 
+  tournamentId, 
+  userId, 
+  onSave, 
+  onPublish,
+  isPublishing,
+  onFillTeamSheets, 
+  onClose 
+}: TournamentManagementModalProps) {
   const [tournamentName, setTournamentName] = useState(settings.tournamentName || 'Proball');
-  const [isPublishing, setIsPublishing] = useState(false);
   // ... (rest of the state)
 
   const handlePublish = async () => {
-    setIsPublishing(true);
-    try {
-      await publishTournament(userId, tournamentId, {
-        tournamentName,
-        numberOfTeams,
-        numberOfPitches,
-        pitches,
-        matchdaySettings,
-        playerSettings,
-        groupStage: stageSettings.group,
-        knockoutStage: stageSettings.knockout
-      });
-      alert('Tournament published successfully!');
-    } catch (err) {
-      console.error('Publish failed', err);
-      alert('Failed to publish tournament.');
-    } finally {
-      setIsPublishing(false);
+    if (onPublish) {
+      try {
+        await onPublish();
+        alert('Tournament published successfully!');
+      } catch (err) {
+        console.error('Publish failed', err);
+        alert('Failed to publish tournament.');
+      }
     }
   };
   const [numberOfTeams, setNumberOfTeams] = useState(settings.numberOfTeams || teams.length || 8);
