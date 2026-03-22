@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, doc, onSnapshot, setDoc, deleteDoc, writeBatch, query, where, getDocFromServer } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, deleteDoc, writeBatch, query, where, getDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { Team, Fixture, Settings, LeagueRow, Group, MatchEvent, PlayerStat, Pitch } from '../types';
 import { generateId } from '../utils';
@@ -24,7 +24,9 @@ export function useTournament(publicTournamentId?: string) {
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [settings, _setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
-  const [userId, setUserId] = useState<string | null>(null);
+  const [tournamentId, setTournamentId] = useState<string | null>(publicTournamentId || null);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [userRole, setUserRole] = useState<'admin' | 'viewer' | null>(null);
   const [allUsers, setAllUsers] = useState<{uid: string, email: string, role: string}[]>([]);
 
@@ -83,11 +85,11 @@ export function useTournament(publicTournamentId?: string) {
   const [isPublishing, setIsPublishing] = useState(false);
 
   const publish = async () => {
-    if (!userId || !isAdmin) return;
+    if (!tournamentId || !isAdmin) return;
     setIsPublishing(true);
     try {
       const { publishTournament } = await import('../services/tournamentService');
-      await publishTournament(userId, userId, {
+      await publishTournament(tournamentId, tournamentId, {
         ...settings,
         publishedAt: new Date().toISOString()
       });
@@ -101,37 +103,44 @@ export function useTournament(publicTournamentId?: string) {
   };
 
   useEffect(() => {
-    if (!userId || publicTournamentId) return;
+    if (!tournamentId) return;
     
-    const unsubPublic = onSnapshot(doc(db, 'public_tournaments', userId), (snapshot) => {
+    const unsubPublic = onSnapshot(doc(db, 'public_tournaments', tournamentId), (snapshot) => {
       if (snapshot.exists()) {
         setLastPublished(snapshot.data().publishedAt || null);
       }
     });
     
     return () => unsubPublic();
-  }, [userId, publicTournamentId]);
+  }, [tournamentId]);
 
-  const isAdmin = userRole === 'admin';
-  const isSuperAdmin = auth?.currentUser?.email === 'conradenock@gmail.com';
+  const isSuperAdmin = currentUserEmail?.toLowerCase() === 'conradenock@gmail.com';
+  const isAdmin = userRole === 'admin' || isSuperAdmin;
+  console.log("Admin status check:", { userRole, isSuperAdmin, isAdmin, currentUserEmail });
 
   const setSettings = async (newSettings: Settings | ((prev: Settings) => Settings)) => {
-    if (!userId || !isAdmin) return;
+    if (!tournamentId || !isAdmin) return;
     const updated = typeof newSettings === 'function' ? newSettings(settings) : newSettings;
-    const path = `users/${userId}/settings/current`;
+    const path = `users/${tournamentId}/settings/current`;
     try {
-      await setDoc(doc(db, path), { ...updated, userId });
+      await setDoc(doc(db, path), { ...updated, userId: tournamentId });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, path);
     }
   };
 
   const updateUserRole = async (targetUserId: string, role: 'admin' | 'viewer') => {
-    if (!userId || !isSuperAdmin) return;
+    console.log(`Attempting to update user ${targetUserId} to role ${role}...`);
+    if (!authUserId || !isSuperAdmin) {
+      console.warn("Update rejected: Not a Super Admin or not logged in.", { authUserId, isSuperAdmin });
+      return;
+    }
     const path = `users/${targetUserId}`;
     try {
       await setDoc(doc(db, path), { role }, { merge: true });
+      console.log(`Successfully updated user ${targetUserId} to ${role}`);
     } catch (error) {
+      console.error(`Failed to update user ${targetUserId}:`, error);
       handleFirestoreError(error, OperationType.WRITE, path);
     }
   };
@@ -139,8 +148,7 @@ export function useTournament(publicTournamentId?: string) {
   useEffect(() => {
     if (publicTournamentId) {
       setLoading(true);
-      setUserRole('viewer');
-      setUserId(publicTournamentId); // Always set userId for viewers
+      setTournamentId(publicTournamentId);
 
       let unsubLiveSettings = () => {};
 
@@ -149,7 +157,16 @@ export function useTournament(publicTournamentId?: string) {
         if (snapshot.exists()) {
           const data = snapshot.data();
           _setSettings(data as Settings);
+          if (data.teams) setTeams(data.teams);
+          if (data.fixtures) {
+            setFixtures((data.fixtures as Fixture[]).sort((a, b) => {
+              if (a.matchday !== b.matchday) return a.matchday - b.matchday;
+              return (a.order || 0) - (b.order || 0);
+            }));
+          }
+          if (data.groups) setGroups(data.groups);
           unsubLiveSettings(); // Stop listening to live settings if public snapshot exists
+          setLoading(false);
         } else {
           // If not published yet, try to load settings from the live path
           // This allows the link to work even if "Publish" wasn't clicked
@@ -157,8 +174,14 @@ export function useTournament(publicTournamentId?: string) {
             if (settingsSnap.exists()) {
               _setSettings(settingsSnap.data() as Settings);
             }
+            setLoading(false);
+          }, (error) => {
+            handleFirestoreError(error, OperationType.GET, `users/${publicTournamentId}/settings/current`);
+            setLoading(false);
           });
         }
+      }, (error) => {
+        handleFirestoreError(error, OperationType.GET, `public_tournaments/${publicTournamentId}`);
         setLoading(false);
       });
 
@@ -169,16 +192,22 @@ export function useTournament(publicTournamentId?: string) {
           if (a.matchday !== b.matchday) return a.matchday - b.matchday;
           return (a.order || 0) - (b.order || 0);
         }));
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, `users/${publicTournamentId}/fixtures`);
       });
 
       // Listen to live teams for real-time player and team updates
       const unsubTeams = onSnapshot(collection(db, `users/${publicTournamentId}/teams`), (snapshot) => {
         setTeams(snapshot.docs.map(doc => doc.data() as Team));
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, `users/${publicTournamentId}/teams`);
       });
 
       // Listen to live groups
       const unsubGroups = onSnapshot(collection(db, `users/${publicTournamentId}/groups`), (snapshot) => {
         setGroups(snapshot.docs.map(doc => doc.data() as Group));
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, `users/${publicTournamentId}/groups`);
       });
 
       return () => {
@@ -191,23 +220,24 @@ export function useTournament(publicTournamentId?: string) {
     }
 
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
-      // If we are in public viewer mode, don't let auth state overwrite the userId
-      if (publicTournamentId) {
-        setLoading(false);
-        return;
+      console.log("Auth state changed:", user?.email);
+      setAuthUserId(user?.uid || null);
+      setCurrentUserEmail(user?.email || null);
+      
+      if (!publicTournamentId) {
+        setTournamentId(user?.uid || null);
       }
 
-      setUserId(user?.uid || null);
       if (user) {
         // Initialize user profile if it doesn't exist
         const userRef = doc(db, 'users', user.uid);
         try {
-          const userSnap = await getDocFromServer(userRef);
+          const userSnap = await getDoc(userRef);
           if (!userSnap.exists()) {
             await setDoc(userRef, {
               uid: user.uid,
               email: user.email,
-              name: user.displayName || 'User',
+              name: (user.displayName || 'User').substring(0, 100),
               role: 'viewer'
             });
           }
@@ -215,11 +245,13 @@ export function useTournament(publicTournamentId?: string) {
           console.error("Error initializing user profile:", error);
         }
       } else {
-        setTeams([]);
-        setGroups([]);
-        setFixtures([]);
+        if (!publicTournamentId) {
+          setTeams([]);
+          setGroups([]);
+          setFixtures([]);
+          _setSettings(DEFAULT_SETTINGS);
+        }
         setUserRole(null);
-        _setSettings(DEFAULT_SETTINGS);
         setLoading(false);
       }
     });
@@ -227,81 +259,110 @@ export function useTournament(publicTournamentId?: string) {
   }, [publicTournamentId]);
 
   useEffect(() => {
-    if (!userId || publicTournamentId) return;
+    if (!authUserId) {
+      setUserRole(null);
+      return;
+    }
 
-    setLoading(true);
-
-    const unsubUser = onSnapshot(doc(db, 'users', userId), (snapshot) => {
+    const unsubUser = onSnapshot(doc(db, 'users', authUserId), (snapshot) => {
+      console.log("User role snapshot:", snapshot.exists(), snapshot.data());
       if (snapshot.exists()) {
         setUserRole(snapshot.data().role || 'viewer');
       } else {
+        console.log("User doc does not exist, defaulting to viewer");
         setUserRole('viewer');
       }
+    }, (error) => {
+      console.error("Error fetching user role:", error);
     });
+
+    return () => unsubUser();
+  }, [authUserId]);
+
+  useEffect(() => {
+    if (!tournamentId || (publicTournamentId && tournamentId !== publicTournamentId)) return;
+
+    setLoading(true);
 
     // Fetch all users if super admin
     let unsubAllUsers = () => {};
     if (isSuperAdmin) {
+      console.log("Super Admin detected, attaching users listener...");
       unsubAllUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
+        console.log(`Received ${snapshot.docs.length} users from Firestore`);
         setAllUsers(snapshot.docs.map(doc => ({
           uid: doc.id,
           email: doc.data().email,
           role: doc.data().role
         })));
+      }, (error) => {
+        console.error("Error fetching users list:", error);
+        handleFirestoreError(error, OperationType.LIST, 'users');
       });
     }
 
-    const unsubTeams = onSnapshot(collection(db, `users/${userId}/teams`), (snapshot) => {
+    const unsubTeams = onSnapshot(collection(db, `users/${tournamentId}/teams`), (snapshot) => {
+      console.log("Teams snapshot received:", snapshot.size, "docs");
       setTeams(snapshot.docs.map(doc => doc.data() as Team));
+    }, (error) => {
+      console.error("Teams snapshot error:", error);
+      handleFirestoreError(error, OperationType.LIST, `users/${tournamentId}/teams`);
     });
 
-    const unsubGroups = onSnapshot(collection(db, `users/${userId}/groups`), (snapshot) => {
+    const unsubGroups = onSnapshot(collection(db, `users/${tournamentId}/groups`), (snapshot) => {
+      console.log("Groups snapshot received:", snapshot.size, "docs");
       const g = snapshot.docs.map(doc => doc.data() as Group);
       setGroups(g.length > 0 ? g : [{ id: 'group-a', name: 'Group A' }]);
+    }, (error) => {
+      console.error("Groups snapshot error:", error);
+      handleFirestoreError(error, OperationType.LIST, `users/${tournamentId}/groups`);
     });
 
-    const unsubFixtures = onSnapshot(collection(db, `users/${userId}/fixtures`), (snapshot) => {
+    const unsubFixtures = onSnapshot(collection(db, `users/${tournamentId}/fixtures`), (snapshot) => {
+      console.log("Fixtures snapshot received:", snapshot.size, "docs");
       const f = snapshot.docs.map(doc => doc.data() as Fixture);
       setFixtures(f.sort((a, b) => {
         if (a.matchday !== b.matchday) return a.matchday - b.matchday;
         return (a.order || 0) - (b.order || 0);
       }));
+    }, (error) => {
+      console.error("Fixtures snapshot error:", error);
+      handleFirestoreError(error, OperationType.LIST, `users/${tournamentId}/fixtures`);
     });
 
-    const unsubSettings = onSnapshot(doc(db, `users/${userId}/settings/current`), (snapshot) => {
+    const unsubSettings = onSnapshot(doc(db, `users/${tournamentId}/settings/current`), (snapshot) => {
       if (snapshot.exists()) {
         _setSettings(snapshot.data() as Settings);
       } else {
         // Initialize settings if they don't exist
-        setDoc(doc(db, `users/${userId}/settings/current`), { ...DEFAULT_SETTINGS, userId });
+        setDoc(doc(db, `users/${tournamentId}/settings/current`), { ...DEFAULT_SETTINGS, userId: tournamentId });
       }
       setLoading(false);
     });
 
     return () => {
-      unsubUser();
       unsubAllUsers();
       unsubTeams();
       unsubGroups();
       unsubFixtures();
       unsubSettings();
     };
-  }, [userId]);
+  }, [tournamentId, isSuperAdmin]);
 
   const addTeam = async (team: Omit<Team, 'id' | 'players'>) => {
-    if (!userId || !isAdmin) return;
+    if (!tournamentId || !isAdmin) return;
     const id = generateId();
-    const path = `users/${userId}/teams/${id}`;
+    const path = `users/${tournamentId}/teams/${id}`;
     try {
-      await setDoc(doc(db, path), { ...team, id, players: [], userId });
+      await setDoc(doc(db, path), { ...team, id, players: [], userId: tournamentId });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, path);
     }
   };
 
   const editTeam = async (id: string, updatedTeam: Partial<Team>) => {
-    if (!userId || !isAdmin) return;
-    const path = `users/${userId}/teams/${id}`;
+    if (!tournamentId || !isAdmin) return;
+    const path = `users/${tournamentId}/teams/${id}`;
     try {
       await setDoc(doc(db, path), { ...updatedTeam }, { merge: true });
     } catch (error) {
@@ -310,15 +371,15 @@ export function useTournament(publicTournamentId?: string) {
   };
 
   const deleteTeam = async (id: string) => {
-    if (!userId || !isAdmin) return;
-    const path = `users/${userId}/teams/${id}`;
+    if (!tournamentId || !isAdmin) return;
+    const path = `users/${tournamentId}/teams/${id}`;
     try {
       await deleteDoc(doc(db, path));
       // Clear fixtures if teams change - in a real app we might want to be more selective
       const batch = writeBatch(db);
       fixtures.forEach(f => {
         if (f.homeTeamId === id || f.awayTeamId === id) {
-          batch.delete(doc(db, `users/${userId}/fixtures`, f.id));
+          batch.delete(doc(db, `users/${tournamentId}/fixtures`, f.id));
         }
       });
       await batch.commit();
@@ -328,14 +389,14 @@ export function useTournament(publicTournamentId?: string) {
   };
 
   const reorderTeams = async (newTeams: Team[]) => {
-    if (!userId || !isAdmin) return;
+    if (!tournamentId || !isAdmin) return;
     // Firestore doesn't have a built-in order, usually we'd add an 'order' field
     // For now, we'll just update them all if needed, but reordering in UI is enough
     setTeams(newTeams);
   };
 
   const reorderFixtures = async (matchday: number, newFixtures: Fixture[]) => {
-    if (!userId || !isAdmin) return;
+    if (!tournamentId || !isAdmin) return;
     
     // Update local state first for responsiveness
     setFixtures(prev => {
@@ -347,16 +408,16 @@ export function useTournament(publicTournamentId?: string) {
     try {
       const batch = writeBatch(db);
       newFixtures.forEach((f, i) => {
-        batch.update(doc(db, `users/${userId}/fixtures`, f.id), { order: i });
+        batch.update(doc(db, `users/${tournamentId}/fixtures`, f.id), { order: i });
       });
       await batch.commit();
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/fixtures`);
+      handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
     }
   };
 
   const moveFixture = async (fixture: Fixture, targetMatchday: number, targetOrder: number) => {
-    if (!userId || !isAdmin) return;
+    if (!tournamentId || !isAdmin) return;
 
     // Update local state
     setFixtures(prev => {
@@ -397,37 +458,37 @@ export function useTournament(publicTournamentId?: string) {
       
       // Update all fixtures in the batch
       reordered.forEach(f => {
-        batch.update(doc(db, `users/${userId}/fixtures`, f.id), { matchday: f.matchday, order: f.order });
+        batch.update(doc(db, `users/${tournamentId}/fixtures`, f.id), { matchday: f.matchday, order: f.order });
       });
       
       await batch.commit();
       setFixtures(reordered);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/fixtures`);
+      handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
     }
   };
 
   const addGroup = async (name: string) => {
-    if (!userId || !isAdmin) return;
+    if (!tournamentId || !isAdmin) return;
     const id = generateId();
-    const path = `users/${userId}/groups/${id}`;
+    const path = `users/${tournamentId}/groups/${id}`;
     try {
-      await setDoc(doc(db, path), { id, name, userId });
+      await setDoc(doc(db, path), { id, name, userId: tournamentId });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, path);
     }
   };
 
   const deleteGroup = async (id: string) => {
-    if (!userId || !isAdmin) return;
-    const path = `users/${userId}/groups/${id}`;
+    if (!tournamentId || !isAdmin) return;
+    const path = `users/${tournamentId}/groups/${id}`;
     try {
       await deleteDoc(doc(db, path));
       
       const batch = writeBatch(db);
       teams.forEach(t => {
         if (t.groupId === id) {
-          batch.update(doc(db, `users/${userId}/teams`, t.id), { groupId: null });
+          batch.update(doc(db, `users/${tournamentId}/teams`, t.id), { groupId: null });
         }
       });
       await batch.commit();
@@ -566,7 +627,7 @@ export function useTournament(publicTournamentId?: string) {
   };
 
   const generateFixtures = async () => {
-    if (teams.length < 2 || !userId || !isAdmin) return;
+    if (teams.length < 2 || !tournamentId || !isAdmin) return;
 
     let newFixtures: Fixture[] = [];
     const pitches = settings.pitches && settings.pitches.length > 0 ? settings.pitches : [{ id: 'pitch-1', name: 'Pitch 1' }];
@@ -796,12 +857,12 @@ export function useTournament(publicTournamentId?: string) {
 
       // Clear old fixtures first? Usually generateFixtures is a "reset" action
       fixtures.forEach(f => {
-        currentBatch.delete(doc(db, `users/${userId}/fixtures`, f.id));
+        currentBatch.delete(doc(db, `users/${tournamentId}/fixtures`, f.id));
         operationCount++;
         if (operationCount === 500) commitCurrentBatch();
       });
       newFixtures.forEach(f => {
-        currentBatch.set(doc(db, `users/${userId}/fixtures`, f.id), { ...f, userId });
+        currentBatch.set(doc(db, `users/${tournamentId}/fixtures`, f.id), { ...f, userId: tournamentId });
         operationCount++;
         if (operationCount === 500) commitCurrentBatch();
       });
@@ -812,12 +873,12 @@ export function useTournament(publicTournamentId?: string) {
       
       await Promise.all(batches);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/fixtures`);
+      handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
     }
   };
 
   const fillAllTeamSheetsWithTestData = async () => {
-    if (!userId || !isAdmin) return;
+    if (!tournamentId || !isAdmin) return;
     const firstNames = ['James', 'John', 'Robert', 'Michael', 'William', 'David', 'Richard', 'Joseph', 'Thomas', 'Charles', 'Christopher', 'Daniel', 'Matthew', 'Anthony', 'Mark', 'Donald', 'Steven', 'Paul', 'Andrew', 'Joshua'];
     const lastNames = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez', 'Hernandez', 'Lopez', 'Gonzalez', 'Wilson', 'Anderson', 'Thomas', 'Taylor', 'Moore', 'Jackson', 'Martin'];
     const positions = ['GK', 'DF', 'MF', 'FW'];
@@ -852,16 +913,16 @@ export function useTournament(publicTournamentId?: string) {
             } : undefined
           });
         }
-        batch.update(doc(db, `users/${userId}/teams`, team.id), { players });
+        batch.update(doc(db, `users/${tournamentId}/teams`, team.id), { players });
       });
       await batch.commit();
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/teams`);
+      handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/teams`);
     }
   };
 
   const generateKnockoutFixtures = async () => {
-    if (!userId) return;
+    if (!tournamentId) return;
     // Check if we already have knockout fixtures
     const existingKnockoutFixtures = fixtures.filter(f => f.matchday >= 100);
     
@@ -904,11 +965,11 @@ export function useTournament(publicTournamentId?: string) {
       try {
         const batch = writeBatch(db);
         newFixtures.forEach(f => {
-          batch.set(doc(db, `users/${userId}/fixtures`, f.id), { ...f, userId });
+          batch.set(doc(db, `users/${tournamentId}/fixtures`, f.id), { ...f, userId: tournamentId });
         });
         await batch.commit();
       } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, `users/${userId}/fixtures`);
+        handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
       }
       return;
     }
@@ -977,11 +1038,11 @@ export function useTournament(publicTournamentId?: string) {
     try {
       const batch = writeBatch(db);
       newFixtures.forEach(f => {
-        batch.set(doc(db, `users/${userId}/fixtures`, f.id), { ...f, userId });
+        batch.set(doc(db, `users/${tournamentId}/fixtures`, f.id), { ...f, userId: tournamentId });
       });
       await batch.commit();
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/fixtures`);
+      handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
     }
   };
 
@@ -1001,8 +1062,8 @@ export function useTournament(publicTournamentId?: string) {
   };
 
   const updateFixture = async (id: string, homeScore: number | null, awayScore: number | null) => {
-    if (!userId || !isAdmin) return;
-    const path = `users/${userId}/fixtures/${id}`;
+    if (!tournamentId || !isAdmin) return;
+    const path = `users/${tournamentId}/fixtures/${id}`;
     try {
       await setDoc(doc(db, path), { homeScore, awayScore }, { merge: true });
     } catch (error) {
@@ -1011,8 +1072,8 @@ export function useTournament(publicTournamentId?: string) {
   };
 
   const updateFixtureDetails = async (id: string, details: Partial<Pick<Fixture, 'date' | 'time' | 'pitchId' | 'matchday'>>) => {
-    if (!userId || !isAdmin) return;
-    const path = `users/${userId}/fixtures/${id}`;
+    if (!tournamentId || !isAdmin) return;
+    const path = `users/${tournamentId}/fixtures/${id}`;
     try {
       // We need the full fixture to perform the conflict check logic if we want to keep it
       // But for simplicity, let's just update the fields. 
@@ -1082,7 +1143,7 @@ export function useTournament(publicTournamentId?: string) {
   };
 
   const updateMatchdayDate = async (matchday: number, date: string) => {
-    if (!userId || !isAdmin) return;
+    if (!tournamentId || !isAdmin) return;
     try {
       // Update settings to store custom matchday date
       const currentCustomMatchdays = settings.matchdaySettings?.customMatchdays || [];
@@ -1108,20 +1169,20 @@ export function useTournament(publicTournamentId?: string) {
       const batch = writeBatch(db);
       fixtures.forEach(f => {
         if (f.matchday === matchday) {
-          batch.update(doc(db, `users/${userId}/fixtures`, f.id), { date });
+          batch.update(doc(db, `users/${tournamentId}/fixtures`, f.id), { date });
         }
       });
       await batch.commit();
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/fixtures`);
+      handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
     }
   };
 
   const toggleFixtureStarted = async (id: string) => {
-    if (!userId || !isAdmin) return;
+    if (!tournamentId || !isAdmin) return;
     const fixture = fixtures.find(f => f.id === id);
     if (fixture) {
-      const path = `users/${userId}/fixtures/${id}`;
+      const path = `users/${tournamentId}/fixtures/${id}`;
       try {
         await setDoc(doc(db, path), { isStarted: !fixture.isStarted }, { merge: true });
       } catch (error) {
@@ -1131,11 +1192,11 @@ export function useTournament(publicTournamentId?: string) {
   };
 
   const toggleFixturePlayed = async (id: string) => {
-    if (!userId || !isAdmin) return;
+    if (!tournamentId || !isAdmin) return;
     const f = fixtures.find(f => f.id === id);
     if (f) {
       const isNowPlayed = !f.isPlayed;
-      const path = `users/${userId}/fixtures/${id}`;
+      const path = `users/${tournamentId}/fixtures/${id}`;
       try {
         await setDoc(doc(db, path), {
           isPlayed: isNowPlayed,
@@ -1211,7 +1272,7 @@ export function useTournament(publicTournamentId?: string) {
   };
 
   const generateTestData = async () => {
-    if (!userId || !isAdmin) return;
+    if (!tournamentId || !isAdmin) return;
     const firstNames = ['James', 'John', 'Robert', 'Michael', 'William', 'David', 'Richard', 'Joseph', 'Thomas', 'Charles', 'Christopher', 'Daniel', 'Matthew', 'Anthony', 'Mark', 'Donald', 'Steven', 'Paul', 'Andrew', 'Joshua'];
     const lastNames = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez', 'Hernandez', 'Lopez', 'Gonzalez', 'Wilson', 'Anderson', 'Thomas', 'Taylor', 'Moore', 'Jackson', 'Martin'];
     const positions = ['GK', 'DF', 'MF', 'FW'];
@@ -1219,14 +1280,14 @@ export function useTournament(publicTournamentId?: string) {
     const batch = writeBatch(db);
     
     // Clear existing
-    teams.forEach(t => batch.delete(doc(db, `users/${userId}/teams`, t.id)));
-    groups.forEach(g => batch.delete(doc(db, `users/${userId}/groups`, g.id)));
-    fixtures.forEach(f => batch.delete(doc(db, `users/${userId}/fixtures`, f.id)));
+    teams.forEach(t => batch.delete(doc(db, `users/${tournamentId}/teams`, t.id)));
+    groups.forEach(g => batch.delete(doc(db, `users/${tournamentId}/groups`, g.id)));
+    fixtures.forEach(f => batch.delete(doc(db, `users/${tournamentId}/fixtures`, f.id)));
 
     const groupAId = generateId();
     const groupBId = generateId();
-    batch.set(doc(db, `users/${userId}/groups`, groupAId), { id: groupAId, name: 'Group A', userId });
-    batch.set(doc(db, `users/${userId}/groups`, groupBId), { id: groupBId, name: 'Group B', userId });
+    batch.set(doc(db, `users/${tournamentId}/groups`, groupAId), { id: groupAId, name: 'Group A', userId: tournamentId });
+    batch.set(doc(db, `users/${tournamentId}/groups`, groupBId), { id: groupBId, name: 'Group B', userId: tournamentId });
 
     const activePerSide = settings.playerSettings?.activePlayersPerSide || 7;
 
@@ -1253,23 +1314,23 @@ export function useTournament(publicTournamentId?: string) {
           });
         }
         const id = generateId();
-        return { id, name, initial, manager: 'Manager', phone: '123-456', players, groupId, userId };
+        return { id, name, initial, manager: 'Manager', phone: '123-456', players, groupId, userId: tournamentId };
       };
 
       const teamA = createTeamData(`Team A${i}`, `TA${i}`, groupAId);
       const teamB = createTeamData(`Team B${i}`, `TB${i}`, groupBId);
-      batch.set(doc(db, `users/${userId}/teams`, teamA.id), teamA);
-      batch.set(doc(db, `users/${userId}/teams`, teamB.id), teamB);
+      batch.set(doc(db, `users/${tournamentId}/teams`, teamA.id), teamA);
+      batch.set(doc(db, `users/${tournamentId}/teams`, teamB.id), teamB);
     }
     try {
       await batch.commit();
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/test-data`);
+      handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/test-data`);
     }
   };
 
   const addMatchEvent = async (fixtureId: string, event: Omit<MatchEvent, 'id'>) => {
-    if (!userId || !isAdmin) return;
+    if (!tournamentId || !isAdmin) return;
     const f = fixtures.find(fixture => fixture.id === fixtureId);
     if (!f) return;
 
@@ -1288,7 +1349,7 @@ export function useTournament(publicTournamentId?: string) {
       }
     }
     
-    const path = `users/${userId}/fixtures/${fixtureId}`;
+    const path = `users/${tournamentId}/fixtures/${fixtureId}`;
     try {
       await setDoc(doc(db, path), { events, homeScore, awayScore }, { merge: true });
     } catch (error) {
@@ -1297,7 +1358,7 @@ export function useTournament(publicTournamentId?: string) {
   };
 
   const removeMatchEvent = async (fixtureId: string, eventId: string) => {
-    if (!userId || !isAdmin) return;
+    if (!tournamentId || !isAdmin) return;
     const f = fixtures.find(fixture => fixture.id === fixtureId);
     if (!f) return;
 
@@ -1316,7 +1377,7 @@ export function useTournament(publicTournamentId?: string) {
       }
     }
     
-    const path = `users/${userId}/fixtures/${fixtureId}`;
+    const path = `users/${tournamentId}/fixtures/${fixtureId}`;
     try {
       await setDoc(doc(db, path), { events, homeScore, awayScore }, { merge: true });
     } catch (error) {
@@ -1363,7 +1424,7 @@ export function useTournament(publicTournamentId?: string) {
   };
 
   const reassignFixturesFromMatchday = async (matchday: number, selectedFixtureIds: string[], overrideSettings?: Settings) => {
-    if (!userId || !isAdmin) return;
+    if (!tournamentId || !isAdmin) return;
     const activeSettings = overrideSettings || settings;
     const unplayedFixtures = fixtures.filter(f => !f.isPlayed);
     const playedFixtures = fixtures.filter(f => f.isPlayed);
@@ -1504,16 +1565,16 @@ export function useTournament(publicTournamentId?: string) {
     try {
       const batch = writeBatch(db);
       allUpdatedFixtures.forEach(f => {
-        batch.set(doc(db, `users/${userId}/fixtures`, f.id), { ...f, userId });
+        batch.set(doc(db, `users/${tournamentId}/fixtures`, f.id), { ...f, userId: tournamentId });
       });
       await batch.commit();
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/fixtures`);
+      handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
     }
   };
 
   const rescheduleFixtures = async (overrideSettings?: Settings) => {
-    if (!userId || !isAdmin || fixtures.length === 0) return;
+    if (!tournamentId || !isAdmin || fixtures.length === 0) return;
     const unplayed = fixtures.filter(f => !f.isPlayed);
     if (unplayed.length === 0) return;
     
@@ -1522,15 +1583,55 @@ export function useTournament(publicTournamentId?: string) {
   };
 
   const toggleRole = async () => {
-    if (!userId) return;
+    if (!authUserId) return;
     const newRole = userRole === 'admin' ? 'viewer' : 'admin';
-    const path = `users/${userId}`;
+    const path = `users/${authUserId}`;
     try {
-      await setDoc(doc(db, 'users', userId), { role: newRole }, { merge: true });
+      await setDoc(doc(db, 'users', authUserId), { role: newRole }, { merge: true });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, path);
     }
   };
+
+  const [currentUser, setCurrentUser] = useState(auth.currentUser);
+
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged(async (user) => {
+      console.log("Auth state changed:", user?.email);
+      setCurrentUser(user);
+      setAuthUserId(user?.uid || null);
+      setCurrentUserEmail(user?.email || null);
+      
+      if (!publicTournamentId) {
+        setTournamentId(user?.uid || null);
+      }
+
+      if (user) {
+        // Initialize user profile if it doesn't exist
+        const userRef = doc(db, 'users', user.uid);
+        try {
+          const userSnap = await getDoc(userRef);
+          if (!userSnap.exists()) {
+            await setDoc(userRef, {
+              uid: user.uid,
+              email: user.email,
+              name: (user.displayName || 'User').substring(0, 100),
+              role: 'viewer'
+            });
+          }
+        } catch (error) {
+          console.error("Error initializing user profile:", error);
+        }
+      } else {
+        if (!publicTournamentId) {
+          setTeams([]);
+          setGroups([]);
+          setFixtures([]);
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [publicTournamentId]);
 
   return {
     teams,
@@ -1568,9 +1669,12 @@ export function useTournament(publicTournamentId?: string) {
     lastPublished,
     isPublishing,
     loading,
-    userId,
+    userId: tournamentId, // Maintain backward compatibility for UI
+    authUserId,
+    tournamentId,
     isAdmin,
     isSuperAdmin,
-    userRole
+    userRole,
+    currentUser
   };
 }

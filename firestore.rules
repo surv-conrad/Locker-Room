@@ -35,9 +35,8 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-         request.auth.token.email == "conradenock@gmail.com");
+      let userDocPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      return isAuthenticated() && exists(userDocPath);
     }
 
     function hasRequiredFields(fields) {
@@ -64,19 +63,15 @@ service cloud.firestore {
 
     function isValidUser() {
       return hasOnlyAllowedFields(['name', 'email', 'role', 'uid']) &&
-             validString('name', 1, 50) &&
+             validString('name', 1, 100) &&
              request.resource.data.email is string &&
-             request.resource.data.role in ['admin', 'viewer', 'editor'] &&
+             request.resource.data.role in ['admin', 'superadmin', 'viewer', 'editor'] &&
              request.resource.data.uid is string &&
              request.resource.data.uid == request.auth.uid;
     }
 
     function isValidUserForAdmin() {
-      return hasOnlyAllowedFields(['name', 'email', 'role', 'uid']) &&
-             validString('name', 1, 50) &&
-             request.resource.data.email is string &&
-             request.resource.data.role in ['admin', 'viewer', 'editor'] &&
-             request.resource.data.uid is string;
+      return request.resource.data.role in ['admin', 'superadmin', 'viewer', 'editor'];
     }
 
     function isValidGroup(userId) {
@@ -94,18 +89,23 @@ service cloud.firestore {
              validString('initial', 1, 10) &&
              (request.resource.data.manager is string ? request.resource.data.manager.size() < 100 : true) &&
              (request.resource.data.phone is string ? request.resource.data.phone.size() < 20 : true) &&
-             request.resource.data.id is string &&
+             (request.resource.data.id is string ? request.resource.data.id.size() < 50 : true) &&
              exists(/databases/$(database)/documents/users/$(userId));
     }
 
     function isValidFixture(userId) {
-      return true;
+      return hasOnlyAllowedFields(['id', 'matchday', 'homeTeamId', 'awayTeamId', 'isPlayed', 'isStarted', 'date', 'time', 'userId', 'homeScore', 'awayScore', 'events', 'pitchId', 'order', 'groupId']) &&
+             request.resource.data.userId == userId &&
+             (request.resource.data.id is string ? request.resource.data.id.size() < 50 : true) &&
+             request.resource.data.matchday is number;
     }
 
     function isValidSettings(userId) {
-      return hasOnlyAllowedFields(['userId', 'tournamentName', 'logoUrl', 'description', 'numberOfTeams', 'numberOfPitches', 'pitches', 'tieBreaker', 'primaryColor', 'matchdaySettings', 'groupStage', 'knockoutStage', 'playerSettings', 'startDate', 'startTime']) &&
+      return hasOnlyAllowedFields(['userId', 'tournamentName', 'logoUrl', 'description', 'numberOfTeams', 'numberOfPitches', 'pitches', 'tieBreaker', 'primaryColor', 'matchdaySettings', 'groupStage', 'knockoutStage', 'playerSettings', 'startDate', 'startTime', 'publishedAt']) &&
              request.resource.data.userId == userId &&
-             (request.resource.data.tournamentName is string ? request.resource.data.tournamentName.size() < 100 : true);
+             (request.resource.data.tournamentName is string ? request.resource.data.tournamentName.size() < 100 : true) &&
+             (request.resource.data.logoUrl is string ? request.resource.data.logoUrl.size() < 500 : true) &&
+             (request.resource.data.description is string ? request.resource.data.description.size() < 1000 : true);
     }
 
     // ===============================================================
@@ -113,33 +113,42 @@ service cloud.firestore {
     // ===============================================================
 
     match /users {
+      allow read: if isAuthenticated();
       allow list: if isAdmin();
       match /{userId} {
-        allow read: if true;
+        allow read: if isAuthenticated();
         allow create: if isOwner(userId) && isValidUser();
         allow update: if (isOwner(userId) && isValidUser()) || (isAdmin() && isValidUserForAdmin());
         allow delete: if isAdmin();
 
-        match /groups/{groupId} {
+        match /groups {
           allow read: if true;
-          allow create: if isOwner(userId) && isValidGroup(userId);
-          allow update: if isOwner(userId) && isValidGroup(userId);
-          allow delete: if isOwner(userId) || isAdmin();
+          match /{groupId} {
+            allow read: if true;
+            allow create: if isOwner(userId) && isValidGroup(userId);
+            allow update: if isOwner(userId) && isValidGroup(userId);
+            allow delete: if isOwner(userId) || isAdmin();
+          }
         }
 
-        match /teams/{teamId} {
+        match /teams {
           allow read: if true;
-          allow create: if isOwner(userId) && isValidTeam(userId);
-          allow update: if isOwner(userId) && isValidTeam(userId);
-          allow delete: if isOwner(userId) || isAdmin();
+          match /{teamId} {
+            allow read: if true;
+            allow create: if isOwner(userId) && isValidTeam(userId);
+            allow update: if isOwner(userId) && isValidTeam(userId);
+            allow delete: if isOwner(userId) || isAdmin();
+          }
         }
 
         match /fixtures {
           allow read: if true;
-          allow write: if isOwner(userId);
+          allow create, update, write: if isOwner(userId) || isAdmin();
+          allow delete: if isOwner(userId) || isAdmin();
           match /{fixtureId} {
             allow read: if true;
-            allow write: if isOwner(userId);
+            allow create, update, write: if isOwner(userId) || isAdmin();
+            allow delete: if isOwner(userId) || isAdmin();
           }
         }
 

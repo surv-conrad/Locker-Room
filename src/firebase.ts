@@ -1,11 +1,12 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
-import { initializeFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, browserPopupRedirectResolver, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { initializeFirestore, doc, getDoc, setDoc, getDocFromServer } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
+setPersistence(auth, browserLocalPersistence);
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
 }, firebaseConfig.firestoreDatabaseId);
@@ -15,19 +16,30 @@ export const googleProvider = new GoogleAuthProvider();
 export const signInWithGoogle = async () => {
   console.log("Attempting to sign in with Google...");
   try {
-    // Check if popup blocker might be active
-    const testWindow = window.open('', '_blank');
-    if (!testWindow) {
-      console.error("CRITICAL: Popup blocked by browser. Please allow popups for this site.");
-      alert("Popup blocked! Please allow popups for this site to log in.");
-      return null;
+    const result = await signInWithPopup(auth, googleProvider, browserPopupRedirectResolver);
+    if (result.user) {
+      // Force immediate profile creation/update
+      const userRef = doc(db, 'users', result.user.uid);
+      const userSnap = await getDoc(userRef);
+      if (!userSnap.exists()) {
+        await setDoc(userRef, {
+          uid: result.user.uid,
+          email: result.user.email,
+          name: (result.user.displayName || 'User').substring(0, 100),
+          role: 'viewer'
+        });
+      }
     }
-    testWindow.close();
-
-    return await signInWithPopup(auth, googleProvider);
+    return result;
   } catch (error: any) {
     console.error("Detailed Authentication error:", error);
+    if (error.code === 'auth/popup-blocked') {
+      alert("Login popup was blocked by your browser. Please look for the 'Pop-up blocked' icon in your address bar and allow pop-ups for this site, then try again.");
+      return null;
+    }
     if (error.code === 'auth/popup-closed-by-user') {
+      console.warn("Popup was closed before authentication could complete. This can happen due to browser security policies in iframes.");
+      alert("The login window was closed. If you are seeing this repeatedly, please try opening the app in a new tab using the icon at the top right of the preview.");
       return null;
     }
     throw error;

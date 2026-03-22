@@ -27,7 +27,17 @@ export function ShareModal({
   isAdmin
 }: ShareModalProps) {
   const [copied, setCopied] = useState(false);
-  const shareLink = `${window.location.origin}/?tournamentId=${tournamentId}`;
+  
+  // Detect if we are on a dev URL and construct the public (pre) URL
+  const getShareLink = () => {
+    const origin = window.location.origin;
+    if (origin.includes('-dev-')) {
+      return origin.replace('-dev-', '-pre-') + `/?tournamentId=${tournamentId}`;
+    }
+    return `${origin}/?tournamentId=${tournamentId}`;
+  };
+
+  const shareLink = getShareLink();
 
   const handleCopy = () => {
     navigator.clipboard.writeText(shareLink);

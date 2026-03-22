@@ -65,10 +65,12 @@ export default function App() {
     lastPublished,
     isPublishing,
     loading,
-    userId,
+    authUserId,
+    tournamentId,
     isAdmin,
     isSuperAdmin,
-    userRole
+    userRole,
+    currentUser
   } = useTournament(publicTournamentId);
 
   const { exportOptions } = useExport();
@@ -78,6 +80,7 @@ export default function App() {
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [isTournamentManagementOpen, setIsTournamentManagementOpen] = useState(false);
   const [isDashboardOpen, setIsDashboardOpen] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [comingSoonFeature, setComingSoonFeature] = useState<string | null>(null);
   const [matchFilter, setMatchFilter] = useState<'all' | 'hide_past' | 'current'>('all');
   const [nameDisplay, setNameDisplay] = useState<'team' | 'player'>('team');
@@ -280,6 +283,18 @@ export default function App() {
     }
   };
 
+  const handleSignIn = async () => {
+    setAuthError(null);
+    try {
+      const result = await signInWithGoogle();
+      if (!result) {
+        setAuthError('The login window was closed or blocked.');
+      }
+    } catch (err: any) {
+      setAuthError(err.message || 'An unexpected error occurred during sign in.');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#0B0E14] text-gray-100 font-sans flex selection:bg-indigo-500/30">
       {/* Sidebar */}
@@ -348,7 +363,8 @@ export default function App() {
               <span className="text-indigo-400">{settings.tournamentName || "Proball"}</span>
             )}
             
-            {userId && (
+            {console.log("App indicator debug:", { authUserId, isAdmin, isSuperAdmin, userRole })}
+            {currentUser && (
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-800/50 border border-gray-700/50">
                 <div className={cn(
                   "w-2 h-2 rounded-full",
@@ -372,7 +388,7 @@ export default function App() {
               </div>
             )}
 
-            {userId ? (
+            {currentUser ? (
               <button 
                 onClick={() => logout()} 
                 className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-all"
@@ -382,11 +398,11 @@ export default function App() {
               </button>
             ) : (
               <button 
-                onClick={() => signInWithGoogle()} 
+                onClick={handleSignIn} 
                 className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-all"
               >
                 <LogIn className="w-4 h-4" />
-                Sign In
+                {publicTournamentId ? 'Sign In to Manage' : 'Sign In'}
               </button>
             )}
 
@@ -404,22 +420,47 @@ export default function App() {
               <Loader2 className="w-10 h-10 animate-spin text-indigo-500" />
               <p className="text-lg font-medium">Loading tournament data...</p>
             </div>
-          ) : (!userId && !publicTournamentId) ? (
+          ) : (!tournamentId) ? (
             <div className="h-full flex flex-col items-center justify-center gap-6 text-center max-w-md mx-auto">
               <div className="w-20 h-20 bg-indigo-600/10 rounded-3xl flex items-center justify-center text-indigo-500 mb-2">
                 <Trophy className="w-10 h-10" />
               </div>
               <h2 className="text-3xl font-bold text-white">Welcome to Locker Room</h2>
               <p className="text-gray-400 leading-relaxed">
-                Sign in to create and manage your tournaments. Your data will be synced across all your devices in real-time.
+                Sign in to create and manage your tournaments, or use a shared link to view live results.
               </p>
+              
+              {authError && (
+                <div className="w-full p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 text-left space-y-3">
+                  <p className="font-semibold flex items-center gap-2">
+                    <Shield className="w-4 h-4" /> Login Issue Detected
+                  </p>
+                  <p>Browser security settings in the preview window often block Google login. For the best experience, please open the app in a new tab.</p>
+                  <button 
+                    onClick={() => window.open(window.location.href, '_blank')}
+                    className="w-full py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg transition-all flex items-center justify-center gap-2 font-medium"
+                  >
+                    <ExternalLink className="w-4 h-4" /> Open in New Tab to Login
+                  </button>
+                </div>
+              )}
+
               <button 
-                onClick={() => signInWithGoogle()} 
+                onClick={handleSignIn} 
                 className="flex items-center gap-3 px-8 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-lg transition-all shadow-xl shadow-indigo-900/20"
               >
                 <LogIn className="w-6 h-6" />
                 Sign in with Google
               </button>
+              
+              {!authError && (
+                <button 
+                  onClick={() => window.open(window.location.href, '_blank')}
+                  className="text-gray-500 hover:text-gray-300 text-sm flex items-center gap-2 transition-colors"
+                >
+                  <ExternalLink className="w-4 h-4" /> Having trouble? Open in new tab
+                </button>
+              )}
             </div>
           ) : (
             <div className="max-w-[1600px] mx-auto">
@@ -550,7 +591,7 @@ export default function App() {
       {/* Settings Modal */}
       {isShareOpen && (
         <ShareModal
-          tournamentId={userId || publicTournamentId || ''}
+          tournamentId={tournamentId || ''}
           onClose={() => setIsShareOpen(false)}
           exportOptions={[...exportOptions, ...globalExportOptions]}
           lastPublished={lastPublished}
@@ -580,8 +621,8 @@ export default function App() {
           settings={settings}
           teams={teams}
           groups={groups}
-          tournamentId={userId || ''}
-          userId={userId || ''}
+          tournamentId={tournamentId || ''}
+          userId={authUserId || ''}
           onSave={handleUpdateSettings}
           onPublish={handlePublish}
           isPublishing={isPublishing}
