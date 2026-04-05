@@ -4,10 +4,11 @@ import { X, Shield, User } from 'lucide-react';
 interface AdminPanelProps {
   users: { uid: string, email: string, role: string }[];
   onUpdateRole: (uid: string, role: 'admin' | 'viewer') => void;
+  onDownloadBackup: () => void;
   onClose: () => void;
 }
 
-export function AdminPanel({ users, onUpdateRole, onClose }: AdminPanelProps) {
+export function AdminPanel({ users, onUpdateRole, onDownloadBackup, onClose }: AdminPanelProps) {
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-[#151821]/90 backdrop-blur-xl rounded-3xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh] border border-gray-800/50">
@@ -21,6 +22,12 @@ export function AdminPanel({ users, onUpdateRole, onClose }: AdminPanelProps) {
         </div>
         
         <div className="p-6 overflow-y-auto flex-1 space-y-4">
+          <button 
+            onClick={onDownloadBackup}
+            className="w-full flex items-center justify-center gap-2 bg-indigo-600/20 border border-indigo-500/30 text-indigo-400 rounded-xl py-3 hover:bg-indigo-600/30 transition-all font-medium"
+          >
+            Download Database Backup
+          </button>
           {users.map(user => (
             <div key={user.uid} className="flex items-center justify-between bg-[#1A1D24]/50 p-4 rounded-xl border border-gray-700/50">
               <div className="flex items-center gap-3">

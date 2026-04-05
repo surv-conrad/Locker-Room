@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Fixture, Team, MatchEvent } from '../types';
 import { X, Plus, Trash2, User, Clock } from 'lucide-react';
 import { cn } from '../utils';
+import { Tooltip, TooltipContent, TooltipTrigger } from './Tooltip';
 
 interface MatchEventsProps {
   fixture: Fixture;
@@ -174,13 +175,17 @@ export function MatchEvents({ fixture, homeTeam, awayTeam, onAddEvent, onRemoveE
                       </div>
                       
                       <div className={cn("flex-1 flex items-center", isHome ? "justify-end" : "justify-start")}>
-                        <button 
-                          onClick={() => onRemoveEvent(fixture.id, event.id)}
-                          className="text-gray-600 hover:text-red-400 transition-colors p-1"
-                          title="Remove event"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button 
+                              onClick={() => onRemoveEvent(fixture.id, event.id)}
+                              className="text-gray-600 hover:text-red-400 transition-colors p-1"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>Remove event</TooltipContent>
+                        </Tooltip>
                       </div>
                     </div>
                   );

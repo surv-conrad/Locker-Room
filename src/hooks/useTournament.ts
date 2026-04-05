@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { collection, doc, onSnapshot, setDoc, deleteDoc, writeBatch, query, where, getDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { Team, Fixture, Settings, LeagueRow, Group, MatchEvent, PlayerStat, Pitch } from '../types';
-import { generateId } from '../utils';
+import { generateId, getStageName } from '../utils';
+import { logAction } from '../services/auditService';
 
 const DEFAULT_SETTINGS: Settings = {
   logoUrl: 'https://picsum.photos/seed/football/200/200',
@@ -115,12 +116,20 @@ export function useTournament(publicTournamentId?: string) {
   }, [tournamentId]);
 
   const isSuperAdmin = currentUserEmail?.toLowerCase() === 'conradenock@gmail.com';
-  const isAdmin = userRole === 'admin' || isSuperAdmin;
-  console.log("Admin status check:", { userRole, isSuperAdmin, isAdmin, currentUserEmail });
+  const isGlobalAdmin = userRole === 'admin' || isSuperAdmin;
+  const isAdmin = isGlobalAdmin || (authUserId !== null && authUserId === tournamentId);
+  console.log("Admin status check:", { userRole, isSuperAdmin, isGlobalAdmin, isAdmin, currentUserEmail });
 
   const setSettings = async (newSettings: Settings | ((prev: Settings) => Settings)) => {
     if (!tournamentId || !isAdmin) return;
     const updated = typeof newSettings === 'function' ? newSettings(settings) : newSettings;
+    
+    // Check logoUrl size
+    if (updated.logoUrl && updated.logoUrl.startsWith('data:image/') && updated.logoUrl.length > 1024 * 1024) {
+      alert('Logo image is too large for the database. Please use a smaller image or a URL.');
+      return;
+    }
+
     const path = `users/${tournamentId}/settings/current`;
     try {
       await setDoc(doc(db, path), { ...updated, userId: tournamentId });
@@ -355,6 +364,7 @@ export function useTournament(publicTournamentId?: string) {
     const path = `users/${tournamentId}/teams/${id}`;
     try {
       await setDoc(doc(db, path), { ...team, id, players: [], userId: tournamentId });
+      await logAction(tournamentId, 'ADD_TEAM', `Added team: ${team.name}`);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, path);
     }
@@ -407,10 +417,26 @@ export function useTournament(publicTournamentId?: string) {
     // Persist to Firestore
     try {
       const batch = writeBatch(db);
+      const now = new Date().toISOString();
+      const updatedFixtures = fixtures.map(f => {
+        if (f.matchday === matchday) {
+          const newIdx = newFixtures.findIndex(nf => nf.id === f.id);
+          if (newIdx !== -1) return { ...f, order: newIdx, isManual: true, updatedAt: now };
+        }
+        return f;
+      });
+
       newFixtures.forEach((f, i) => {
-        batch.update(doc(db, `users/${tournamentId}/fixtures`, f.id), { order: i });
+        batch.update(doc(db, `users/${tournamentId}/fixtures`, f.id), { 
+          order: i, 
+          isManual: true,
+          updatedAt: now 
+        });
       });
       await batch.commit();
+      
+      // Reorganize the rest of the tournament
+      await regenerateUnplayedFixtures(updatedFixtures);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
     }
@@ -419,50 +445,53 @@ export function useTournament(publicTournamentId?: string) {
   const moveFixture = async (fixture: Fixture, targetMatchday: number, targetOrder: number) => {
     if (!tournamentId || !isAdmin) return;
 
-    // Update local state
-    setFixtures(prev => {
-      // 1. Remove fixture from its current position
-      const others = prev.filter(f => f.id !== fixture.id);
-      
-      // 2. Insert fixture at target position
-      const updated = [...others, { ...fixture, matchday: targetMatchday, order: targetOrder }];
-      
-      // 3. Reorder all fixtures to ensure contiguous orders
-      const matchdays = Array.from(new Set(updated.map(f => f.matchday))).sort((a, b) => a - b);
-      const reordered = matchdays.flatMap(day => {
-        const dayFixtures = updated.filter(f => f.matchday === day).sort((a, b) => (a.order || 0) - (b.order || 0));
-        return dayFixtures.map((f, i) => ({ ...f, order: i }));
-      });
-      
-      return reordered;
-    });
-
     // Persist to Firestore
     try {
       const batch = writeBatch(db);
-      // Update all fixtures in the affected matchdays
+      const now = new Date().toISOString();
       const affectedMatchdays = new Set([fixture.matchday, targetMatchday]);
-      
-      // We need to fetch the updated state from the setFixtures callback, 
-      // but setFixtures is async/state-based.
-      // Let's rethink: we can calculate the reordered fixtures first, then update.
       
       // Re-calculate the reordered fixtures based on the change
       const others = fixtures.filter(f => f.id !== fixture.id);
-      const updated = [...others, { ...fixture, matchday: targetMatchday, order: targetOrder }];
-      const matchdays = Array.from(new Set(updated.map(f => f.matchday))).sort((a, b) => a - b);
-      const reordered = matchdays.flatMap(day => {
-        const dayFixtures = updated.filter(f => f.matchday === day).sort((a, b) => (a.order || 0) - (b.order || 0));
-        return dayFixtures.map((f, i) => ({ ...f, order: i }));
-      });
       
-      // Update all fixtures in the batch
-      reordered.forEach(f => {
-        batch.update(doc(db, `users/${tournamentId}/fixtures`, f.id), { matchday: f.matchday, order: f.order });
+      // Target matchday fixtures
+      const targetDayFixtures = others.filter(f => f.matchday === targetMatchday).sort((a, b) => (a.order || 0) - (b.order || 0));
+      
+      // Insert the fixture at the targetOrder index
+      const updatedFixture = { ...fixture, matchday: targetMatchday, isManual: true, updatedAt: now };
+      targetDayFixtures.splice(targetOrder, 0, updatedFixture);
+      
+      // Reassign orders for the target matchday
+      const updatedTargetDayFixtures = targetDayFixtures.map((f, i) => ({ ...f, order: i, isManual: true, updatedAt: now }));
+      
+      // Reassign orders for the source matchday (if different)
+      let updatedSourceDayFixtures: Fixture[] = [];
+      if (fixture.matchday !== targetMatchday) {
+        const sourceDayFixtures = others.filter(f => f.matchday === fixture.matchday).sort((a, b) => (a.order || 0) - (b.order || 0));
+        updatedSourceDayFixtures = sourceDayFixtures.map((f, i) => ({ ...f, order: i, isManual: true, updatedAt: now }));
+      }
+      
+      const unaffectedFixtures = others.filter(f => f.matchday !== targetMatchday && f.matchday !== fixture.matchday);
+      
+      const reordered = [...unaffectedFixtures, ...updatedTargetDayFixtures, ...updatedSourceDayFixtures];
+      
+      // Update local state
+      setFixtures(reordered);
+      
+      // Update all fixtures in the affected matchdays in Firestore
+      [...updatedTargetDayFixtures, ...updatedSourceDayFixtures].forEach(f => {
+        batch.update(doc(db, `users/${tournamentId}/fixtures`, f.id), { 
+          matchday: f.matchday, 
+          order: f.order,
+          isManual: true,
+          updatedAt: now
+        });
       });
       
       await batch.commit();
-      setFixtures(reordered);
+      
+      // Reorganize the rest of the tournament
+      await regenerateUnplayedFixtures(reordered);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
     }
@@ -498,6 +527,50 @@ export function useTournament(publicTournamentId?: string) {
   };
 
   // Helper functions for scheduling
+  const generateRoundRobin = (teams: Team[], numberOfLegs: number) => {
+    const fixtures: Fixture[] = [];
+    const teamIds = teams.map(t => t.id);
+    if (teamIds.length % 2 !== 0) teamIds.push('BYE');
+    
+    const numTeams = teamIds.length;
+    const numRounds = numTeams - 1;
+    const halfSize = numTeams / 2;
+    
+    for (let leg = 0; leg < numberOfLegs; leg++) {
+      let currentTeamIds = [...teamIds];
+      
+      for (let round = 0; round < numRounds; round++) {
+        for (let i = 0; i < halfSize; i++) {
+          const home = currentTeamIds[i];
+          const away = currentTeamIds[numTeams - 1 - i];
+          
+          if (home !== 'BYE' && away !== 'BYE') {
+            // Swap home/away for second leg
+            const isHome = leg % 2 === 0;
+            
+            fixtures.push({
+              id: generateId(),
+              matchday: (leg * numRounds) + round + 1,
+              homeTeamId: isHome ? home : away,
+              awayTeamId: isHome ? away : home,
+              homeScore: null,
+              awayScore: null,
+              isPlayed: false,
+              isStarted: false,
+              date: '', // Will be set later
+              pitchId: '', // Will be set later
+            });
+          }
+        }
+        
+        // Rotate teams (keep the first team fixed)
+        const last = currentTeamIds.pop()!;
+        currentTeamIds.splice(1, 0, last);
+      }
+    }
+    return fixtures;
+  };
+
   const formatDate = (date: Date) => {
     try {
       if (isNaN(date.getTime())) return new Date().toISOString().split('T')[0];
@@ -505,6 +578,146 @@ export function useTournament(publicTournamentId?: string) {
     } catch (e) {
       return new Date().toISOString().split('T')[0];
     }
+  };
+
+  const scheduleFixturesGlobal = (matches: Fixture[], currentSettings: Settings, startMatchday: number = 1) => {
+    const globalRestingDays = currentSettings.matchdaySettings?.restingDays || 0;
+    const globalMatchesPerDay = currentSettings.matchdaySettings?.matchesPerDay || 0;
+    
+    const scheduled: Fixture[] = [];
+    
+    // Extract manual fixtures
+    let remainingManual = matches.filter(f => f.isManual);
+    const remainingDynamic = matches.filter(f => !f.isManual);
+    
+    let currentMatchday = startMatchday;
+    const teamLastPlayedOn = new Map<string, number>();
+    
+    // Process manual fixtures that are BEFORE startMatchday
+    const pastManual = remainingManual.filter(f => f.matchday < startMatchday);
+    for (const match of pastManual) {
+      scheduled.push(match);
+      if (match.homeTeamId !== '') teamLastPlayedOn.set(match.homeTeamId, match.matchday);
+      if (match.awayTeamId !== '') teamLastPlayedOn.set(match.awayTeamId, match.matchday);
+    }
+    remainingManual = remainingManual.filter(f => f.matchday >= startMatchday);
+    
+    // Track current active settings
+    let activeRestingDays = globalRestingDays;
+    let activeMatchesPerDay = globalMatchesPerDay;
+    let isMatchesPerDayAuto = globalMatchesPerDay === 0;
+
+    while (remainingDynamic.length > 0 || remainingManual.length > 0) {
+      // Update active settings if custom ones exist for this day
+      const customSettings = currentSettings.matchdaySettings?.customMatchdays?.find(m => m.matchday === currentMatchday);
+      
+      // Inherit from previous day (which starts as global default), then override with custom if exists
+      if (customSettings) {
+        if (customSettings.restingDays !== null && customSettings.restingDays !== undefined) {
+          activeRestingDays = customSettings.restingDays;
+        }
+        if (customSettings.matchesPerDay !== null && customSettings.matchesPerDay !== undefined) {
+          activeMatchesPerDay = customSettings.matchesPerDay;
+          isMatchesPerDayAuto = false;
+        }
+      }
+
+      let matchesToday = 0;
+      const teamsPlayingToday = new Set<string>();
+      const groupsPlayingToday = new Set<string>();
+      
+      // 1. Process manual fixtures for today
+      const manualToday = remainingManual.filter(f => f.matchday === currentMatchday);
+      for (const match of manualToday) {
+        scheduled.push(match);
+        matchesToday++;
+        if (match.homeTeamId !== '') {
+          teamsPlayingToday.add(match.homeTeamId);
+          teamLastPlayedOn.set(match.homeTeamId, currentMatchday);
+        }
+        if (match.awayTeamId !== '') {
+          teamsPlayingToday.add(match.awayTeamId);
+          teamLastPlayedOn.set(match.awayTeamId, currentMatchday);
+        }
+        if (match.groupId) groupsPlayingToday.add(match.groupId);
+      }
+      remainingManual = remainingManual.filter(f => f.matchday !== currentMatchday);
+
+      // Helper function to try scheduling a match
+      const tryScheduleMatch = (match: Fixture, index: number, respectGroupConstraint: boolean): boolean => {
+        if (respectGroupConstraint && match.groupId && groupsPlayingToday.has(match.groupId)) return false;
+
+        const homeId = match.homeTeamId;
+        const awayId = match.awayTeamId;
+        
+        // Check restingDays constraint
+        const homeLastPlayed = teamLastPlayedOn.get(homeId) ?? -1000;
+        const awayLastPlayed = teamLastPlayedOn.get(awayId) ?? -1000;
+        
+        const homeCanPlay = (currentMatchday - homeLastPlayed) > activeRestingDays;
+        const awayCanPlay = (currentMatchday - awayLastPlayed) > activeRestingDays;
+        
+        // Check if teams already playing today (ignore TBD teams)
+        const homeNotPlayingToday = homeId === '' || !teamsPlayingToday.has(homeId);
+        const awayNotPlayingToday = awayId === '' || !teamsPlayingToday.has(awayId);
+        
+        if (homeCanPlay && awayCanPlay && homeNotPlayingToday && awayNotPlayingToday) {
+          match.matchday = currentMatchday;
+          match.order = matchesToday;
+          scheduled.push(match);
+          remainingDynamic.splice(index, 1);
+          
+          matchesToday++;
+          if (homeId !== '') teamsPlayingToday.add(homeId);
+          if (awayId !== '') teamsPlayingToday.add(awayId);
+          if (match.groupId) groupsPlayingToday.add(match.groupId);
+          if (homeId !== '') teamLastPlayedOn.set(homeId, currentMatchday);
+          if (awayId !== '') teamLastPlayedOn.set(awayId, currentMatchday);
+          return true;
+        }
+        return false;
+      };
+
+      // Pass 1: Try to schedule one match from each group
+      const groups = Array.from(new Set(remainingDynamic.map(f => f.groupId).filter(Boolean) as string[]));
+      for (const groupId of groups) {
+        if (!isMatchesPerDayAuto && matchesToday >= activeMatchesPerDay) break;
+        
+        // Find the first match for this group
+        const matchIndex = remainingDynamic.findIndex(f => f.groupId === groupId);
+        if (matchIndex !== -1) {
+          tryScheduleMatch(remainingDynamic[matchIndex], matchIndex, true);
+        }
+      }
+
+      // Pass 2: If space remains, try to schedule matches ignoring group constraint
+      if (isMatchesPerDayAuto || matchesToday < activeMatchesPerDay) {
+        for (let i = 0; i < remainingDynamic.length; i++) {
+          if (!isMatchesPerDayAuto && matchesToday >= activeMatchesPerDay) break;
+          if (tryScheduleMatch(remainingDynamic[i], i, false)) {
+            i--; // Adjust index after splice
+          }
+        }
+      }
+      
+      // Move to next day
+      currentMatchday++;
+      
+      // Safety break to prevent infinite loop if constraints are impossible
+      if (currentMatchday > 2000) {
+        for (const match of remainingManual) {
+          scheduled.push(match);
+        }
+        for (let i = 0; i < remainingDynamic.length; i++) {
+          remainingDynamic[i].matchday = currentMatchday;
+          remainingDynamic[i].order = i;
+          scheduled.push(remainingDynamic[i]);
+        }
+        break;
+      }
+    }
+    
+    return scheduled;
   };
   
   const getDateForMatchday = (matchdayIndex: number, overrideSettings?: Settings) => {
@@ -624,6 +837,136 @@ export function useTournament(publicTournamentId?: string) {
       currentTime = addMinutes(currentTime, MATCH_DURATION);
     }
     return scheduled;
+  };
+
+  const regenerateUnplayedFixtures = async (fixturesOverride?: Fixture[]) => {
+    if (!tournamentId || !isAdmin) return;
+
+    const baseFixtures = fixturesOverride || fixtures;
+
+    // 1. Identify locked fixtures (played or manual)
+    const lockedFixtures = baseFixtures.filter(f => f.isPlayed || f.isManual);
+    const dynamicFixtures = baseFixtures.filter(f => !f.isPlayed && !f.isManual);
+
+    // 2. Separate group and knockout fixtures
+    const lockedGroup = lockedFixtures.filter(f => f.matchday < 100);
+    const lockedKnockout = lockedFixtures.filter(f => f.matchday >= 100);
+    
+    const dynamicGroup = dynamicFixtures.filter(f => f.matchday < 100);
+    const dynamicKnockout = dynamicFixtures.filter(f => f.matchday >= 100);
+
+    // 3. Calculate missing group pairings
+    let missingGroupFixtures: Fixture[] = [];
+    const numberOfLegs = settings.groupStage.numberOfLegs || 1;
+
+    if (groups.length > 0) {
+      groups.forEach(group => {
+        const groupTeams = teams.filter(t => t.groupId === group.id);
+        if (groupTeams.length < 2) return;
+
+        const allPairings = generateRoundRobin(groupTeams, numberOfLegs);
+        const lockedGroupPairings = lockedGroup.filter(f => f.groupId === group.id);
+        
+        const lockedPairingsCount = new Map<string, number>();
+        lockedGroupPairings.forEach(l => {
+          const key = [l.homeTeamId, l.awayTeamId].sort().join('-');
+          lockedPairingsCount.set(key, (lockedPairingsCount.get(key) || 0) + 1);
+        });
+
+        const missing = allPairings.filter(p => {
+          const key = [p.homeTeamId, p.awayTeamId].sort().join('-');
+          const lockedCount = lockedPairingsCount.get(key) || 0;
+          if (lockedCount > 0) {
+            lockedPairingsCount.set(key, lockedCount - 1);
+            return false;
+          }
+          return true;
+        });
+        
+        missing.forEach(f => f.groupId = group.id);
+        missingGroupFixtures = [...missingGroupFixtures, ...missing];
+      });
+    } else {
+      const allPairings = generateRoundRobin(teams, numberOfLegs);
+      
+      const lockedPairingsCount = new Map<string, number>();
+      lockedGroup.forEach(l => {
+        const key = [l.homeTeamId, l.awayTeamId].sort().join('-');
+        lockedPairingsCount.set(key, (lockedPairingsCount.get(key) || 0) + 1);
+      });
+
+      const missing = allPairings.filter(p => {
+        const key = [p.homeTeamId, p.awayTeamId].sort().join('-');
+        const lockedCount = lockedPairingsCount.get(key) || 0;
+        if (lockedCount > 0) {
+          lockedPairingsCount.set(key, lockedCount - 1);
+          return false;
+        }
+        return true;
+      });
+      missingGroupFixtures = missing;
+    }
+
+    // 4. Combine unplayed locked group with missing group
+    const unplayedLockedGroup = lockedGroup.filter(f => !f.isPlayed);
+    const groupToSchedule = [...unplayedLockedGroup, ...missingGroupFixtures];
+    
+    // 5. Schedule group fixtures
+    const scheduledGroup = scheduleFixturesGlobal(groupToSchedule, settings, 1);
+
+    // 6. Handle knockout fixtures
+    // We keep all unplayed knockout fixtures (both locked and dynamic)
+    const unplayedLockedKnockout = lockedKnockout.filter(f => !f.isPlayed);
+    const knockoutToSchedule = [...unplayedLockedKnockout, ...dynamicKnockout];
+    
+    let scheduledKnockout: Fixture[] = [];
+    if (knockoutToSchedule.length > 0) {
+      const lastGroupMatchday = scheduledGroup.length > 0 
+        ? Math.max(...scheduledGroup.map(f => f.matchday)) 
+        : (lockedGroup.length > 0 ? Math.max(...lockedGroup.map(f => f.matchday)) : 0);
+      
+      let currentKnockoutStart = Math.max(101, lastGroupMatchday + 1);
+      
+      // Group knockout fixtures by their original matchday to preserve round/leg separation
+      // We must group them BEFORE scheduling to avoid modified matchdays affecting the filter
+      const fixturesByOriginalMatchday = new Map<number, Fixture[]>();
+      knockoutToSchedule.forEach(f => {
+        if (!fixturesByOriginalMatchday.has(f.matchday)) {
+          fixturesByOriginalMatchday.set(f.matchday, []);
+        }
+        fixturesByOriginalMatchday.get(f.matchday)!.push(f);
+      });
+      
+      const knockoutMatchdays = Array.from(fixturesByOriginalMatchday.keys()).sort((a, b) => a - b);
+      
+      for (const originalMatchday of knockoutMatchdays) {
+        const fixturesForThisRound = fixturesByOriginalMatchday.get(originalMatchday)!;
+        const scheduledRound = scheduleFixturesGlobal(fixturesForThisRound, settings, currentKnockoutStart);
+        scheduledKnockout.push(...scheduledRound);
+        
+        if (scheduledRound.length > 0) {
+          currentKnockoutStart = Math.max(...scheduledRound.map(f => f.matchday)) + 1;
+        }
+      }
+    }
+
+    // 7. Update Firestore
+    try {
+      const batch = writeBatch(db);
+      // Delete old dynamic fixtures
+      const baseFixtures = fixturesOverride || fixtures;
+      const dynamicFixtures = baseFixtures.filter(f => !f.isPlayed && !f.isManual);
+      dynamicFixtures.forEach(f => {
+        batch.delete(doc(db, `users/${tournamentId}/fixtures`, f.id));
+      });
+      // Add new/updated fixtures
+      [...scheduledGroup, ...scheduledKnockout].forEach(f => {
+        batch.set(doc(db, `users/${tournamentId}/fixtures`, f.id), { ...f, userId: tournamentId });
+      });
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
+    }
   };
 
   const generateFixtures = async () => {
@@ -808,7 +1151,7 @@ export function useTournament(publicTournamentId?: string) {
     }
 
     // Apply advanced scheduling
-    newFixtures = scheduleFixtures(newFixtures);
+    newFixtures = scheduleFixturesGlobal(newFixtures, settings);
 
     // Assign dates, times and pitches
     // Group by matchday first
@@ -921,123 +1264,337 @@ export function useTournament(publicTournamentId?: string) {
     }
   };
 
+  const seedGroupStageResults = async () => {
+    if (!tournamentId || !isAdmin) return;
+    const unplayedGroupFixtures = fixtures.filter(f => f.matchday < 100 && !f.isPlayed);
+    if (unplayedGroupFixtures.length === 0) {
+      alert("No unplayed group stage matches found.");
+      return;
+    }
+
+    if (!window.confirm(`This will assign random scores to all ${unplayedGroupFixtures.length} unplayed group stage matches. Continue?`)) {
+      return;
+    }
+
+    try {
+      const batch = writeBatch(db);
+      unplayedGroupFixtures.forEach(f => {
+        const homeScore = Math.floor(Math.random() * 4);
+        const awayScore = Math.floor(Math.random() * 4);
+        batch.update(doc(db, `users/${tournamentId}/fixtures`, f.id), {
+          homeScore,
+          awayScore,
+          isPlayed: true,
+          isStarted: true,
+          updatedAt: new Date().toISOString()
+        });
+      });
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
+    }
+  };
+
+  const seedKnockoutResults = async () => {
+    if (!tournamentId || !isAdmin) return;
+    const unplayedKnockoutFixtures = fixtures.filter(f => f.matchday >= 100 && !f.isPlayed);
+    if (unplayedKnockoutFixtures.length === 0) {
+      alert("No unplayed knockout matches found.");
+      return;
+    }
+
+    if (!window.confirm(`This will assign random scores to all ${unplayedKnockoutFixtures.length} unplayed knockout matches. Continue?`)) {
+      return;
+    }
+
+    try {
+      const batch = writeBatch(db);
+      unplayedKnockoutFixtures.forEach(f => {
+        // For knockout, we want to avoid draws if possible or just pick a winner
+        let homeScore = Math.floor(Math.random() * 4);
+        let awayScore = Math.floor(Math.random() * 4);
+        
+        // If it's a single leg or the last leg of a pair, we might need a winner
+        // But for "test data", random is usually fine.
+        // Let's just make sure there's a winner if it's the only match in that round for those teams
+        
+        batch.update(doc(db, `users/${tournamentId}/fixtures`, f.id), {
+          homeScore,
+          awayScore,
+          isPlayed: true,
+          isStarted: true,
+          updatedAt: new Date().toISOString()
+        });
+      });
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
+    }
+  };
+
   const generateKnockoutFixtures = async () => {
     if (!tournamentId) return;
+    
     // Check if we already have knockout fixtures
     const existingKnockoutFixtures = fixtures.filter(f => f.matchday >= 100);
     
     if (existingKnockoutFixtures.length > 0) {
-      // Find the latest round
-      const maxMatchday = Math.max(...existingKnockoutFixtures.map(f => f.matchday));
-      const latestRoundFixtures = existingKnockoutFixtures.filter(f => f.matchday === maxMatchday);
+      const anyPlayed = existingKnockoutFixtures.some(f => f.isPlayed);
       
-      // Check if all played
-      if (latestRoundFixtures.some(f => !f.isPlayed)) {
-        alert("Please finish all matches in the current knockout round first.");
+      if (anyPlayed) {
+        // Find the latest round
+        const maxMatchday = Math.max(...existingKnockoutFixtures.map(f => f.matchday));
+        const latestRoundFixtures = existingKnockoutFixtures.filter(f => f.matchday === maxMatchday);
+        
+        // Check if all played in the latest round
+        if (latestRoundFixtures.some(f => !f.isPlayed)) {
+          alert("Please finish all matches in the current knockout round first.");
+          return;
+        }
+        
+        // Get winners
+        const currentStageName = latestRoundFixtures[0]?.stageName;
+        const currentRoundFixtures = existingKnockoutFixtures.filter(f => f.stageName === currentStageName);
+
+        if (currentRoundFixtures.some(f => !f.isPlayed)) {
+          alert("Please finish all matches in the current knockout round first.");
+          return;
+        }
+
+        const pairings = new Map<string, { home: string, away: string, fixtures: Fixture[] }>();
+        currentRoundFixtures.forEach(f => {
+          const pairKey = [f.homeTeamId, f.awayTeamId].sort().join('-');
+          if (!pairings.has(pairKey)) {
+            pairings.set(pairKey, { home: f.homeTeamId, away: f.awayTeamId, fixtures: [] });
+          }
+          pairings.get(pairKey)!.fixtures.push(f);
+        });
+
+        const winners: string[] = [];
+        pairings.forEach(p => {
+          const homeScore = p.fixtures.reduce((acc, f) => {
+            if (f.homeTeamId === p.home) return acc + (f.homeScore || 0);
+            return acc + (f.awayScore || 0);
+          }, 0);
+          const awayScore = p.fixtures.reduce((acc, f) => {
+            if (f.awayTeamId === p.away) return acc + (f.awayScore || 0);
+            return acc + (f.homeScore || 0);
+          }, 0);
+          
+          if (homeScore > awayScore) {
+            winners.push(p.home);
+          } else if (awayScore > homeScore) {
+            winners.push(p.away);
+          } else {
+            // Tie-breaker: home team of first fixture
+            winners.push(p.home);
+          }
+        });
+        
+        if (winners.length < 2) {
+          alert("Tournament finished!");
+          return;
+        }
+        
+        // Generate next round
+        const newFixtures: Fixture[] = [];
+        const startMatchday = maxMatchday + 1;
+        const pitchId = settings.pitches?.[0]?.id || 'pitch-1';
+        
+        const stageName = getStageName(winners.length);
+        const legs = settings.knockoutStage.numberOfLegs || 1;
+        
+        for (let i = 0; i < winners.length; i += 2) {
+          if (i + 1 < winners.length) {
+            const tieId = generateId();
+            newFixtures.push(createKnockoutFixture(winners[i], winners[i+1], 1, pitchId, '', stageName, legs, tieId));
+            if (legs === 2) {
+              newFixtures.push(createKnockoutFixture(winners[i+1], winners[i], 2, pitchId, '', stageName, legs, tieId));
+            }
+          }
+        }
+        
+        // Apply advanced scheduling starting from the next available matchday
+        const scheduledFixtures = scheduleFixturesGlobal(newFixtures, settings, startMatchday);
+
+        // Assign dates, times and pitches
+        const fixturesByMatchday: Record<number, Fixture[]> = {};
+        scheduledFixtures.forEach(f => {
+          if (!fixturesByMatchday[f.matchday]) fixturesByMatchday[f.matchday] = [];
+          fixturesByMatchday[f.matchday].push(f);
+        });
+
+        const pitches = settings.pitches || [{ id: 'pitch-1', name: 'Pitch 1' }];
+
+        Object.keys(fixturesByMatchday).forEach(dayStr => {
+          const day = parseInt(dayStr);
+          const dayFixtures = fixturesByMatchday[day];
+          const matchdayIndex = day - 1;
+          const date = getDateForMatchday(matchdayIndex);
+          const startTime = getTimeForMatchday(matchdayIndex);
+          
+          dayFixtures.forEach(f => f.date = date);
+          scheduleMatchdayMatches(dayFixtures, pitches, startTime || '09:00');
+        });
+
+        try {
+          const batch = writeBatch(db);
+          scheduledFixtures.forEach(f => {
+            batch.set(doc(db, `users/${tournamentId}/fixtures`, f.id), { ...f, userId: tournamentId });
+          });
+          await batch.commit();
+        } catch (error) {
+          handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
+        }
         return;
-      }
-      
-      // Get winners
-      const winners = latestRoundFixtures.map(f => {
-        if ((f.homeScore || 0) > (f.awayScore || 0)) return f.homeTeamId;
-        if ((f.awayScore || 0) > (f.homeScore || 0)) return f.awayTeamId;
-        return f.homeTeamId; // Fallback
-      });
-      
-      if (winners.length < 2) {
-        alert("Tournament finished!");
-        return;
-      }
-      
-      // Generate next round
-      const newFixtures: Fixture[] = [];
-      const nextMatchday = maxMatchday + 1;
-      const nextDate = new Date();
-      nextDate.setDate(nextDate.getDate() + 1);
-      const pitchId = settings.pitches?.[0]?.id || 'pitch-1';
-      
-      for (let i = 0; i < winners.length; i += 2) {
-        if (i + 1 < winners.length) {
-          newFixtures.push(createKnockoutFixture(winners[i], winners[i+1], nextMatchday - 100, pitchId, formatDate(nextDate)));
+      } else {
+        // No matches played, offer to regenerate first round
+        if (!window.confirm("No knockout matches have been played yet. Would you like to regenerate the initial knockout round based on the latest standings?")) {
+          return;
+        }
+        
+        try {
+          const batch = writeBatch(db);
+          existingKnockoutFixtures.forEach(f => {
+            batch.delete(doc(db, `users/${tournamentId}/fixtures`, f.id));
+          });
+          await batch.commit();
+          // Continue to initial generation logic below
+        } catch (error) {
+          handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
+          return;
         }
       }
-      
-      try {
-        const batch = writeBatch(db);
-        newFixtures.forEach(f => {
-          batch.set(doc(db, `users/${tournamentId}/fixtures`, f.id), { ...f, userId: tournamentId });
-        });
-        await batch.commit();
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
-      }
-      return;
     }
 
-    // 1. Calculate current standings
-    const table = getLeagueTable();
+    // 1. Calculate current standings (only if groups exist)
+    let table: LeagueRow[] = [];
+    if (groups.length > 0) {
+      table = getLeagueTable();
+    }
     
-    // 2. Determine qualifiers based on groups
+    // 2. Determine qualifiers based on groups or random if knockout-only
     let qualifiers: { teamId: string; groupId?: string; position: number }[] = [];
     
     if (groups.length > 0) {
       groups.forEach(group => {
         const groupTable = table.filter(row => row.groupId === group.id);
-        const winners = groupTable.slice(0, settings.groupStage.numberOfWinners);
+        // If numberOfWinners is 0 or not set, treat all teams in group as qualifiers
+        const numWinners = settings.groupStage.numberOfWinners > 0 ? settings.groupStage.numberOfWinners : groupTable.length;
+        const winners = groupTable.slice(0, numWinners);
         winners.forEach((row, index) => {
           qualifiers.push({ teamId: row.teamId, groupId: group.id, position: index + 1 });
         });
       });
+      
+      // Include teams not assigned to any group
+      teams.filter(t => !t.groupId).forEach((team, index) => {
+        qualifiers.push({ teamId: team.id, position: qualifiers.length + 1 });
+      });
+      
+      // If no qualifiers found from groups or unassigned, fallback to all teams
+      if (qualifiers.length === 0) {
+        teams.forEach((team, index) => {
+          qualifiers.push({ teamId: team.id, groupId: team.groupId, position: index + 1 });
+        });
+      }
     } else {
-      const limit = teams.length >= 4 ? 4 : 2;
-      const winners = table.slice(0, limit);
-      winners.forEach((row, index) => {
-        qualifiers.push({ teamId: row.teamId, position: index + 1 });
+      // Knockout tournament logic: random initial pairing
+      const shuffledTeams = [...teams].sort(() => Math.random() - 0.5);
+      shuffledTeams.forEach((team, index) => {
+        qualifiers.push({ teamId: team.id, groupId: team.groupId, position: index + 1 });
       });
     }
 
-    if (qualifiers.length < 2) return;
+    if (qualifiers.length < 2) {
+      alert("Not enough teams to generate knockout fixtures.");
+      return;
+    }
+
+    const stageName = getStageName(qualifiers.length);
+    const legs = settings.knockoutStage.numberOfLegs || 1;
+    const matchesPerDay = settings.matchdaySettings?.matchesPerDay || 1;
+    const restingDays = settings.matchdaySettings?.restingDays || 0;
+    const numFixtures = qualifiers.length / 2;
+    const numMatchdaysNeeded = Math.ceil(numFixtures / matchesPerDay);
+
+    // Update settings with new numberOfMatchdays
+    const updatedSettings = {
+      ...settings,
+      knockoutStage: {
+        ...settings.knockoutStage,
+        numberOfMatchdays: numMatchdaysNeeded
+      }
+    };
+    await setSettings(updatedSettings);
 
     // 3. Generate fixtures
     const newFixtures: Fixture[] = [];
-    const knockoutDate = new Date();
-    knockoutDate.setDate(knockoutDate.getDate() + 1); // Tomorrow
-    
     const pitches = settings.pitches || [{ id: 'pitch-1', name: 'Pitch 1' }];
+
+    const createFixture = (homeId: string, awayId: string) => {
+      const tieId = generateId();
+      newFixtures.push(createKnockoutFixture(homeId, awayId, 1, pitches[0].id, '', stageName, legs, tieId));
+      if (legs === 2) {
+        newFixtures.push(createKnockoutFixture(awayId, homeId, 2, pitches[0].id, '', stageName, legs, tieId));
+      }
+    };
 
     if (groups.length === 2) {
       const groupA = groups[0].id;
       const groupB = groups[1].id;
       
-      const a1 = qualifiers.find(q => q.groupId === groupA && q.position === 1);
-      const a2 = qualifiers.find(q => q.groupId === groupA && q.position === 2);
-      const b1 = qualifiers.find(q => q.groupId === groupB && q.position === 1);
-      const b2 = qualifiers.find(q => q.groupId === groupB && q.position === 2);
+      const aWinners = qualifiers.filter(q => q.groupId === groupA).sort((a, b) => a.position - b.position);
+      const bWinners = qualifiers.filter(q => q.groupId === groupB).sort((a, b) => a.position - b.position);
       
-      if (a1 && b2) {
-        newFixtures.push(createKnockoutFixture(a1.teamId, b2.teamId, 1, pitches[0].id, formatDate(knockoutDate)));
-      }
-      if (b1 && a2) {
-        newFixtures.push(createKnockoutFixture(b1.teamId, a2.teamId, 1, pitches[0].id, formatDate(knockoutDate)));
-      }
-    } else if (groups.length === 0) {
-      if (qualifiers.length === 4) {
-        newFixtures.push(createKnockoutFixture(qualifiers[0].teamId, qualifiers[3].teamId, 1, pitches[0].id, formatDate(knockoutDate)));
-        newFixtures.push(createKnockoutFixture(qualifiers[1].teamId, qualifiers[2].teamId, 1, pitches[0].id, formatDate(knockoutDate)));
-      } else if (qualifiers.length === 2) {
-        newFixtures.push(createKnockoutFixture(qualifiers[0].teamId, qualifiers[1].teamId, 1, pitches[0].id, formatDate(knockoutDate)));
+      for (let i = 0; i < aWinners.length; i++) {
+        const opponent = bWinners[bWinners.length - 1 - i];
+        if (opponent) {
+          createFixture(aWinners[i].teamId, opponent.teamId);
+        }
       }
     } else {
-      for (let i = 0; i < qualifiers.length; i += 2) {
-        if (i + 1 < qualifiers.length) {
-           newFixtures.push(createKnockoutFixture(qualifiers[i].teamId, qualifiers[i+1].teamId, 1, pitches[0].id, formatDate(knockoutDate)));
+      // Sort qualifiers to ensure consistent pairing
+      const sortedQualifiers = [...qualifiers].sort((a, b) => {
+        if (a.position !== b.position) return a.position - b.position;
+        return (a.groupId || '').localeCompare(b.groupId || '');
+      });
+      
+      for (let i = 0; i < sortedQualifiers.length; i += 2) {
+        if (i + 1 < sortedQualifiers.length) {
+           createFixture(sortedQualifiers[i].teamId, sortedQualifiers[i+1].teamId);
         }
       }
     }
+    
+    // Apply advanced scheduling
+    const scheduledFixtures = scheduleFixturesGlobal(newFixtures, settings, 101);
+
+    // Assign dates, times and pitches
+    // Group by matchday first
+    const fixturesByMatchday: Record<number, Fixture[]> = {};
+    scheduledFixtures.forEach(f => {
+      if (!fixturesByMatchday[f.matchday]) fixturesByMatchday[f.matchday] = [];
+      fixturesByMatchday[f.matchday].push(f);
+    });
+
+    Object.keys(fixturesByMatchday).forEach(dayStr => {
+      const day = parseInt(dayStr);
+      const dayFixtures = fixturesByMatchday[day];
+      const matchdayIndex = day - 1;
+      const date = getDateForMatchday(matchdayIndex);
+      const startTime = getTimeForMatchday(matchdayIndex);
+      
+      // Set dates
+      dayFixtures.forEach(f => f.date = date);
+      
+      // Schedule times and pitches
+      scheduleMatchdayMatches(dayFixtures, pitches, startTime || '09:00');
+    });
 
     try {
       const batch = writeBatch(db);
-      newFixtures.forEach(f => {
+      scheduledFixtures.forEach(f => {
         batch.set(doc(db, `users/${tournamentId}/fixtures`, f.id), { ...f, userId: tournamentId });
       });
       await batch.commit();
@@ -1046,7 +1603,7 @@ export function useTournament(publicTournamentId?: string) {
     }
   };
 
-  const createKnockoutFixture = (homeId: string, awayId: string, matchday: number, pitchId: string, date: string): Fixture => {
+  const createKnockoutFixture = (homeId: string, awayId: string, matchday: number, pitchId: string, date: string, stageName: string, legs: number, tieId?: string): Fixture => {
     return {
       id: generateId(),
       matchday: 100 + matchday, // Use high matchday number for knockout to separate
@@ -1058,7 +1615,137 @@ export function useTournament(publicTournamentId?: string) {
       isStarted: false,
       date: date,
       pitchId: pitchId,
+      stageName: stageName,
+      legs: legs,
+      tieId: tieId,
     };
+  };
+
+  const updateFixtureTeams = async (id: string, homeTeamId: string, awayTeamId: string) => {
+    console.log("updateFixtureTeams called", { id, homeTeamId, awayTeamId, tournamentId, isAdmin, userRole, isGlobalAdmin });
+    if (!tournamentId || !isAdmin) {
+      console.warn("updateFixtureTeams rejected", { tournamentId, isAdmin, userRole, isGlobalAdmin });
+      return;
+    }
+    
+    const currentFixture = fixtures.find(f => f.id === id);
+    if (!currentFixture) {
+      console.warn("Fixture not found", { id });
+      return;
+    }
+
+    try {
+      const batch = writeBatch(db);
+      const now = new Date().toISOString();
+      
+      const isKnockout = currentFixture.matchday >= 100;
+      const newIsManual = isKnockout ? false : true;
+
+      let updatedFixtures = [...fixtures];
+      const oldHomeId = currentFixture.homeTeamId;
+      const oldAwayId = currentFixture.awayTeamId;
+      const legs = currentFixture.legs || settings.knockoutStage?.numberOfLegs || 1;
+
+      // Identify the other leg if it's a 2-leg knockout tie
+      const otherLegId = (isKnockout && legs === 2) ? updatedFixtures.find(f => {
+        if (f.id === id) return false;
+        if (currentFixture.tieId && f.tieId === currentFixture.tieId) return true;
+        return f.stageName === currentFixture.stageName && 
+               f.homeTeamId === oldAwayId && 
+               f.awayTeamId === oldHomeId;
+      })?.id : null;
+
+      const swapTeamInOtherFixtures = (newTeamId: string, oldTeamId: string) => {
+        if (!newTeamId || newTeamId === oldTeamId) return;
+
+        const otherFixtures = updatedFixtures.filter(f => 
+          f.id !== id && 
+          f.id !== otherLegId &&
+          !f.isPlayed &&
+          (isKnockout ? f.stageName === currentFixture.stageName : f.matchday === currentFixture.matchday) &&
+          (f.homeTeamId === newTeamId || f.awayTeamId === newTeamId)
+        );
+
+        for (const otherF of otherFixtures) {
+          const isHome = otherF.homeTeamId === newTeamId;
+          const updatedOtherF = { ...otherF, updatedAt: now };
+          
+          if (isHome) {
+            updatedOtherF.homeTeamId = oldTeamId;
+          } else {
+            updatedOtherF.awayTeamId = oldTeamId;
+          }
+          
+          batch.update(doc(db, `users/${tournamentId}/fixtures/${otherF.id}`), {
+            homeTeamId: updatedOtherF.homeTeamId,
+            awayTeamId: updatedOtherF.awayTeamId,
+            updatedAt: now
+          });
+          
+          updatedFixtures = updatedFixtures.map(f => f.id === otherF.id ? updatedOtherF : f);
+        }
+      };
+
+      if (homeTeamId !== oldHomeId) {
+        swapTeamInOtherFixtures(homeTeamId, oldHomeId);
+      }
+      if (awayTeamId !== oldAwayId) {
+        swapTeamInOtherFixtures(awayTeamId, oldAwayId);
+      }
+
+      // Update current fixture
+      batch.update(doc(db, `users/${tournamentId}/fixtures/${id}`), { 
+        homeTeamId, 
+        awayTeamId, 
+        isManual: newIsManual,
+        updatedAt: now 
+      });
+
+      updatedFixtures = updatedFixtures.map(f => f.id === id ? { ...f, homeTeamId, awayTeamId, isManual: newIsManual, updatedAt: now } : f);
+
+      // Link home/away for knockout 2-leg ties
+      if (otherLegId) {
+        batch.update(doc(db, `users/${tournamentId}/fixtures/${otherLegId}`), { 
+          homeTeamId: awayTeamId, 
+          awayTeamId: homeTeamId, 
+          isManual: newIsManual,
+          updatedAt: now 
+        });
+        updatedFixtures = updatedFixtures.map(f => f.id === otherLegId ? { ...f, homeTeamId: awayTeamId, awayTeamId: homeTeamId, isManual: newIsManual, updatedAt: now } : f);
+      }
+
+      await batch.commit();
+      
+      // Reorganize the rest of the tournament based on the manual change
+      await regenerateUnplayedFixtures(updatedFixtures);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures/${id}`);
+    }
+  };
+
+  const addManualFixture = async (homeTeamId: string, awayTeamId: string, matchday: number) => {
+    if (!tournamentId || !isAdmin) return;
+    
+    const newFixture: Fixture = {
+      id: generateId(),
+      matchday,
+      homeTeamId,
+      awayTeamId,
+      homeScore: null,
+      awayScore: null,
+      isPlayed: false,
+      isStarted: false,
+      date: getDateForMatchday(matchday - 1),
+      time: getTimeForMatchday(matchday - 1) || '09:00',
+      pitchId: settings.pitches?.[0]?.id || 'pitch-1',
+      order: fixtures.filter(f => f.matchday === matchday).length,
+    };
+
+    try {
+      await setDoc(doc(db, `users/${tournamentId}/fixtures`, newFixture.id), { ...newFixture, userId: tournamentId });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
+    }
   };
 
   const updateFixture = async (id: string, homeScore: number | null, awayScore: number | null) => {
@@ -1136,7 +1823,14 @@ export function useTournament(publicTournamentId?: string) {
         }
       }
       
-      await setDoc(doc(db, path), details, { merge: true });
+      const now = new Date().toISOString();
+      const finalDetails = { ...details, isManual: true, updatedAt: now };
+      const finalFixtures = fixtures.map(f => f.id === id ? { ...f, ...finalDetails } : f);
+
+      await setDoc(doc(db, path), finalDetails, { merge: true });
+      
+      // Reorganize the rest of the tournament
+      await regenerateUnplayedFixtures(finalFixtures);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, path);
     }
@@ -1175,6 +1869,34 @@ export function useTournament(publicTournamentId?: string) {
       await batch.commit();
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/fixtures`);
+    }
+  };
+
+  const updateMatchdayTitle = async (matchday: number, title: string) => {
+    if (!tournamentId || !isAdmin) return;
+    try {
+      const currentCustomMatchdays = settings.matchdaySettings?.customMatchdays || [];
+      const existingIndex = currentCustomMatchdays.findIndex(m => m.matchday === matchday);
+      
+      let newCustomMatchdays;
+      if (existingIndex >= 0) {
+        newCustomMatchdays = [...currentCustomMatchdays];
+        newCustomMatchdays[existingIndex] = { ...currentCustomMatchdays[existingIndex], title };
+      } else {
+        const dayFixtures = fixtures.filter(f => f.matchday === matchday);
+        const date = dayFixtures[0]?.date || settings.startDate || new Date().toISOString().split('T')[0];
+        newCustomMatchdays = [...currentCustomMatchdays, { matchday, date, title }];
+      }
+      
+      await setSettings({
+        ...settings,
+        matchdaySettings: {
+          ...(settings.matchdaySettings || { numberOfMatchdays: 0, customMatchdays: [] }),
+          customMatchdays: newCustomMatchdays
+        }
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${tournamentId}/settings`);
     }
   };
 
@@ -1269,6 +1991,28 @@ export function useTournament(publicTournamentId?: string) {
       if (b.goalDifference !== a.goalDifference) return b.goalDifference - a.goalDifference;
       return b.goalsFor - a.goalsFor;
     });
+  };
+
+  const deleteTournament = async () => {
+    if (!tournamentId || !isAdmin) return;
+    const batch = writeBatch(db);
+    
+    // Clear existing
+    teams.forEach(t => batch.delete(doc(db, `users/${tournamentId}/teams`, t.id)));
+    groups.forEach(g => batch.delete(doc(db, `users/${tournamentId}/groups`, g.id)));
+    fixtures.forEach(f => batch.delete(doc(db, `users/${tournamentId}/fixtures`, f.id)));
+    
+    // Reset settings
+    batch.set(doc(db, `users/${tournamentId}/settings/current`), { ...DEFAULT_SETTINGS, userId: tournamentId });
+
+    // Delete public tournament if exists
+    batch.delete(doc(db, 'public_tournaments', tournamentId));
+
+    try {
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `users/${tournamentId}`);
+    }
   };
 
   const generateTestData = async () => {
@@ -1644,16 +2388,23 @@ export function useTournament(publicTournamentId?: string) {
     addTeam,
     editTeam,
     deleteTeam,
+    deleteTournament,
     addGroup,
     deleteGroup,
     generateFixtures,
+    regenerateUnplayedFixtures,
+    addManualFixture,
     updateFixture,
+    updateFixtureTeams,
     updateFixtureDetails,
     updateMatchdayDate,
+    updateMatchdayTitle,
     toggleFixtureStarted,
     toggleFixturePlayed,
     getLeagueTable,
     generateKnockoutFixtures,
+    seedGroupStageResults,
+    seedKnockoutResults,
     generateTestData,
     addMatchEvent,
     removeMatchEvent,
@@ -1673,6 +2424,7 @@ export function useTournament(publicTournamentId?: string) {
     authUserId,
     tournamentId,
     isAdmin,
+    isGlobalAdmin,
     isSuperAdmin,
     userRole,
     currentUser

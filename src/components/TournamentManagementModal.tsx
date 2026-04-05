@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Settings, StageSettings, Team, Group } from '../types';
-import { X, Save, Trophy, Calendar, Clock, Edit2, RotateCcw, Users, Share2 } from 'lucide-react';
+import { X, Save, Trophy, Calendar, Clock, Edit2, RotateCcw, Users, Share2, AlertCircle } from 'lucide-react';
 import { cn } from '../utils';
 import { publishTournament } from '../services/tournamentService';
+import { ConfirmModal } from './ConfirmModal';
 
 interface TournamentManagementModalProps {
   settings: Settings;
@@ -57,7 +58,9 @@ export function TournamentManagementModal({
     activePlayersPerSide: 7,
     maxSubs: 5
   });
-  const [activeStage, setActiveStage] = useState<'group' | 'knockout'>('group');
+  const [activeStage, setActiveStage] = useState<'group' | 'knockout'>(
+    (localStorage.getItem('mgmt_active_stage') as 'group' | 'knockout') || 'group'
+  );
   const [stageSettings, setStageSettings] = useState<{ group: StageSettings; knockout: StageSettings }>({
     group: settings.groupStage || { numberOfWinners: 1, numberOfLegs: 1 },
     knockout: settings.knockoutStage || { numberOfWinners: 1, numberOfLegs: 2 },
@@ -65,12 +68,39 @@ export function TournamentManagementModal({
   const [isEditingSchedule, setIsEditingSchedule] = useState(false);
   const [isManualMatchdays, setIsManualMatchdays] = useState(matchdaySettings.isManual ?? matchdaySettings.numberOfMatchdays > 0);
   const [showFillConfirm, setShowFillConfirm] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('mgmt_active_stage', activeStage);
+  }, [activeStage]);
+
+  const hasChanges = useMemo(() => {
+    return (
+      tournamentName !== (settings.tournamentName || 'Proball') ||
+      numberOfTeams !== (settings.numberOfTeams || teams.length || 8) ||
+      numberOfPitches !== (settings.numberOfPitches || 1) ||
+      JSON.stringify(pitches) !== JSON.stringify(settings.pitches || [{ id: 'pitch-1', name: 'Pitch 1' }]) ||
+      JSON.stringify(matchdaySettings) !== JSON.stringify(settings.matchdaySettings || { numberOfMatchdays: 0, customMatchdays: [], matchesPerDay: 0, restingDays: 0 }) ||
+      JSON.stringify(playerSettings) !== JSON.stringify(settings.playerSettings || { maxPlayersPerTeam: 15, activePlayersPerSide: 7, maxSubs: 5 }) ||
+      JSON.stringify(stageSettings.group) !== JSON.stringify(settings.groupStage || { numberOfWinners: 1, numberOfLegs: 1 }) ||
+      JSON.stringify(stageSettings.knockout) !== JSON.stringify(settings.knockoutStage || { numberOfWinners: 1, numberOfLegs: 2 })
+    );
+  }, [tournamentName, numberOfTeams, numberOfPitches, pitches, matchdaySettings, playerSettings, stageSettings, settings]);
+
+  const handleClose = () => {
+    if (hasChanges) {
+      setShowExitConfirm(true);
+    } else {
+      onClose();
+    }
+  };
 
   // Calculate recommended matchdays based on teams, legs, matchesPerDay and restingDays
   const calculatedMatchdays = React.useMemo(() => {
     if (!numberOfTeams || numberOfTeams < 2) return 0;
 
     let totalGroupMatches = 0;
+    const groupCount = groups.length || 1;
     if (groups.length > 0) {
       groups.forEach(group => {
         const actualCount = teams.filter(t => t.groupId === group.id).length;
@@ -81,7 +111,7 @@ export function TournamentManagementModal({
       totalGroupMatches = (numberOfTeams * (numberOfTeams - 1) / 2) * stageSettings.group.numberOfLegs;
     }
 
-    // Simulate scheduling to find required days
+    // Simulate scheduling to find required group stage days
     let remainingMatches = totalGroupMatches;
     let day = 0;
     let activeRestingDays = matchdaySettings.restingDays || 0;
@@ -93,7 +123,7 @@ export function TournamentManagementModal({
     const teamLastPlayed = new Array(numberOfTeams).fill(-100);
     
     // Safety limit
-    while (remainingMatches > 0 && day < 2000) {
+    while (remainingMatches > 0 && day < 1000) {
       day++;
       const custom = (matchdaySettings.customMatchdays || []).find(m => m.matchday === day);
       
@@ -130,9 +160,29 @@ export function TournamentManagementModal({
         }
       }
     }
+
+    const groupStageDays = day;
+
+    // Calculate Knockout Stage Days
+    const totalQualifiers = groupCount * stageSettings.group.numberOfWinners;
+    if (totalQualifiers >= 2) {
+      const knockoutRounds = Math.ceil(Math.log2(totalQualifiers));
+      const knockoutDays = knockoutRounds * (stageSettings.knockout.numberOfLegs || 1);
+      const total = groupStageDays + knockoutDays;
+      return isNaN(total) || !isFinite(total) ? groupStageDays : total;
+    }
     
-    return day || 0;
-  }, [numberOfTeams, groups, teams, stageSettings.group.numberOfLegs, matchdaySettings.matchesPerDay, matchdaySettings.customMatchdays]);
+    return isNaN(groupStageDays) || !isFinite(groupStageDays) ? 0 : groupStageDays;
+  }, [numberOfTeams, groups, teams, stageSettings.group.numberOfLegs, stageSettings.group.numberOfWinners, stageSettings.knockout.numberOfLegs, matchdaySettings.matchesPerDay, matchdaySettings.restingDays, matchdaySettings.customMatchdays]);
+
+  const knockoutMatchdays = useMemo(() => {
+    const groupCount = groups.length || 1;
+    const totalQualifiers = groupCount * stageSettings.group.numberOfWinners;
+    if (totalQualifiers < 2) return 0;
+    const knockoutRounds = Math.ceil(Math.log2(totalQualifiers));
+    const total = knockoutRounds * (stageSettings.knockout.numberOfLegs || 1);
+    return isNaN(total) || !isFinite(total) ? 0 : total;
+  }, [groups.length, stageSettings.group.numberOfWinners, stageSettings.knockout.numberOfLegs]);
 
   useEffect(() => {
     setMatchdaySettings(prev => {
@@ -281,7 +331,7 @@ export function TournamentManagementModal({
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
             <Trophy className="w-4 h-4 text-indigo-500" /> Tournament Management
           </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-200 transition-colors p-1.5 hover:bg-gray-800/50 rounded-full">
+          <button onClick={handleClose} className="text-gray-400 hover:text-gray-200 transition-colors p-1.5 hover:bg-gray-800/50 rounded-full">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -489,12 +539,12 @@ export function TournamentManagementModal({
                         name="manualMatchdays"
                         min="1"
                         className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
-                        value={matchdaySettings.numberOfMatchdays}
+                        value={matchdaySettings.numberOfMatchdays || 0}
                         onChange={(e) => setMatchdaySettings({ ...matchdaySettings, numberOfMatchdays: parseInt(e.target.value) || 0 })}
                       />
                     ) : (
                       <div className="w-full bg-[#1A1D24]/20 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-400">
-                        {calculatedMatchdays} matchdays
+                        {calculatedMatchdays || 0} matchdays
                       </div>
                     )}
 
@@ -568,17 +618,25 @@ export function TournamentManagementModal({
                 </div>
 
                 <div className="space-y-4">
-                  <div>
-                    <label htmlFor="winners-count" className="block text-xs font-medium text-gray-400 mb-1">Number of Winners</label>
-                    <input
-                      type="number"
-                      id="winners-count"
-                      name="winnersCount"
-                      min="1"
-                      className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
-                      value={stageSettings[activeStage].numberOfWinners}
-                      onChange={(e) => updateStageSetting('numberOfWinners', parseInt(e.target.value))}
-                    />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="winners-count" className="block text-xs font-medium text-gray-400 mb-1">Number of Winners</label>
+                      <input
+                        type="number"
+                        id="winners-count"
+                        name="winnersCount"
+                        min="1"
+                        className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
+                        value={stageSettings[activeStage].numberOfWinners || 0}
+                        onChange={(e) => updateStageSetting('numberOfWinners', parseInt(e.target.value) || 0)}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-400 mb-1">Knockout Matchdays</label>
+                      <div className="w-full bg-[#1A1D24]/20 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-400">
+                        {knockoutMatchdays || 0} days
+                      </div>
+                    </div>
                   </div>
 
                   <div>
@@ -695,7 +753,7 @@ export function TournamentManagementModal({
           <div className="pt-2 flex gap-2 border-t border-gray-800/50 mt-4">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               className="flex-1 px-3 py-2 text-xs text-gray-300 bg-[#1A1D24]/80 hover:bg-gray-800 border border-gray-700/50 rounded-lg transition-all duration-200 font-medium shadow-sm"
             >
               Cancel
@@ -708,6 +766,16 @@ export function TournamentManagementModal({
             </button>
           </div>
         </form>
+
+        <ConfirmModal
+          isOpen={showExitConfirm}
+          title="Unsaved Changes"
+          message="You have unsaved changes in your tournament settings. Are you sure you want to exit without saving?"
+          confirmText="Exit Without Saving"
+          confirmStyle="danger"
+          onConfirm={onClose}
+          onCancel={() => setShowExitConfirm(false)}
+        />
       </div>
     </div>
   );

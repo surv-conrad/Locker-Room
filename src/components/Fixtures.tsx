@@ -1,11 +1,11 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, ReactNode } from 'react';
 import Papa from 'papaparse';
-import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, useDroppable } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Fixture, Team, Group, Settings, MatchEvent } from '../types';
 import { ModernSelect } from './ModernSelect';
-import { Calendar, RefreshCw, Download, Pencil, Trophy, X, Save, Activity, List, GitMerge, Image as ImageIcon, Share2 } from 'lucide-react';
+import { Calendar, RefreshCw, Download, Pencil, Trophy, X, Save, Activity, List, GitMerge, Image as ImageIcon, Share2, Plus, Dices } from 'lucide-react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -15,6 +15,7 @@ import { MatchEvents } from './MatchEvents';
 import { KnockoutBracket } from './KnockoutBracket';
 import { ConfirmModal } from './ConfirmModal';
 import { MatchCard } from './MatchCard';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './Tooltip';
 
 interface FixturesProps {
   fixtures: Fixture[];
@@ -24,9 +25,13 @@ interface FixturesProps {
   isAdmin: boolean;
   onGenerateFixtures: () => void;
   onGenerateKnockoutFixtures: () => void;
+  onAddManualFixture: (homeTeamId: string, awayTeamId: string, matchday: number) => void;
+  onUpdateFixtureTeams: (id: string, homeTeamId: string, awayTeamId: string) => void;
+  onRegenerateUnplayed: () => void;
   onUpdateFixture: (id: string, homeScore: number | null, awayScore: number | null) => void;
   onUpdateFixtureDetails: (id: string, details: Partial<Pick<Fixture, 'date' | 'time' | 'pitchId' | 'matchday'>>) => void;
   onUpdateMatchdayDate: (matchday: number, date: string) => void;
+  onUpdateMatchdayTitle: (matchday: number, title: string) => void;
   onToggleFixtureStarted: (id: string) => void;
   onToggleFixturePlayed: (id: string) => void;
   onAddGroup: (name: string) => void;
@@ -37,20 +42,55 @@ interface FixturesProps {
   onMoveFixture: (fixture: Fixture, targetMatchday: number, targetOrder: number) => void;
   onReassignFixturesFromMatchday: (matchday: number, selectedFixtureIds: string[]) => void;
   onRescheduleFixtures: () => void;
+  onSeedGroupStageResults: () => void;
+  onSeedKnockoutResults: () => void;
   matchFilter: 'all' | 'hide_past' | 'current';
   nameDisplay: 'team' | 'player';
 }
 
-export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingFixtureId, setEditingFixtureId, onUpdateFixture, onUpdateFixtureDetails, onToggleFixtureStarted, onToggleFixturePlayed, onAddMatchEvent, setSelectedFixtureForEvents, setSelectedFixtureForShare, getTeamName, getPitchName, getGroupColor, handleScoreChange }: any) {
+export function SortableFixtureRow({ fixture, teams, groups, settings, isAdmin, editingFixtureId, setEditingFixtureId, onUpdateFixture, onUpdateFixtureTeams, onUpdateFixtureDetails, onToggleFixtureStarted, onToggleFixturePlayed, onAddMatchEvent, onRegenerateUnplayed, setSelectedFixtureForEvents, setSelectedFixtureForShare, getTeamName, getPitchName, getGroupColor, handleScoreChange }: any) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: fixture.id });
   const style = { transform: CSS.Transform.toString(transform), transition };
   
+  const [editingTeam, setEditingTeam] = useState<'home' | 'away' | null>(null);
+
+  const handleTeamSelect = async (type: 'home' | 'away', teamId: string) => {
+    console.log("handleTeamSelect called", { type, teamId, fixtureId: fixture.id, isAdmin });
+    const homeId = type === 'home' ? teamId : fixture.homeTeamId;
+    const awayId = type === 'away' ? teamId : fixture.awayTeamId;
+    
+    if (homeId === awayId) {
+      console.log("handleTeamSelect: homeId === awayId, returning");
+      setEditingTeam(null);
+      return;
+    }
+    
+    console.log("handleTeamSelect: calling onUpdateFixtureTeams", { homeId, awayId });
+    await onUpdateFixtureTeams(fixture.id, homeId, awayId);
+    setEditingTeam(null);
+  };
+
+  const teamOptions = teams.map((t: any) => {
+    const group = groups?.find((g: any) => g.id === t.groupId);
+    return { 
+      value: t.id, 
+      label: group ? `${t.name} (${group.name})` : t.name 
+    };
+  });
+
   const homeWon = fixture.isPlayed && fixture.homeScore !== null && fixture.awayScore !== null && fixture.homeScore > fixture.awayScore;
   const awayWon = fixture.isPlayed && fixture.homeScore !== null && fixture.awayScore !== null && fixture.awayScore > fixture.homeScore;
   const pillColor = getGroupColor(fixture.groupId);
 
   return (
-    <div ref={setNodeRef} style={style} className="rounded-xl border border-gray-800/50 bg-[#2A2D35]/50 backdrop-blur-sm transition-all duration-200 hover:border-gray-700">
+    <div 
+      ref={setNodeRef} 
+      style={style} 
+      className={cn(
+        "rounded-xl border border-gray-800/50 bg-[#2A2D35]/50 backdrop-blur-sm transition-all duration-200 hover:border-gray-700 relative",
+        editingTeam ? "z-50 shadow-[0_0_20px_rgba(0,0,0,0.3)]" : "z-0"
+      )}
+    >
       {isAdmin && <div className="cursor-grab p-1 flex items-center justify-center text-gray-500" {...attributes} {...listeners}>⋮⋮</div>}
       <div className={cn("text-center text-xs py-1.5 font-medium flex justify-between px-2 rounded-t-xl", pillColor)}>
         {editingFixtureId === fixture.id ? (
@@ -68,16 +108,20 @@ export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingF
               ))}
             </select>
             <label htmlFor={`matchday-${fixture.id}`} className="sr-only">Matchday</label>
-            <input 
-              id={`matchday-${fixture.id}`}
-              name={`matchday-${fixture.id}`}
-              type="number" 
-              min="1"
-              className="bg-[#1A1D24] border border-gray-700 rounded px-1 py-0.5 text-[10px] text-white w-[40px]"
-              defaultValue={fixture.matchday}
-              onChange={(e) => onUpdateFixtureDetails(fixture.id, { matchday: parseInt(e.target.value) })}
-              title="Matchday"
-            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <input 
+                  id={`matchday-${fixture.id}`}
+                  name={`matchday-${fixture.id}`}
+                  type="number" 
+                  min="1"
+                  className="bg-[#1A1D24] border border-gray-700 rounded px-1 py-0.5 text-[10px] text-white w-[40px]"
+                  defaultValue={fixture.matchday}
+                  onChange={(e) => onUpdateFixtureDetails(fixture.id, { matchday: parseInt(e.target.value) })}
+                />
+              </TooltipTrigger>
+              <TooltipContent>Matchday</TooltipContent>
+            </Tooltip>
             <label htmlFor={`date-${fixture.id}`} className="sr-only">Date</label>
             <input 
               id={`date-${fixture.id}`}
@@ -132,20 +176,28 @@ export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingF
               )}
               {(fixture.isStarted || fixture.isPlayed) && isAdmin && (
                 <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setSelectedFixtureForEvents(fixture)}
-                    className="text-xs text-gray-400 hover:text-white flex items-center gap-1 bg-gray-800/50 px-2 py-0.5 rounded border border-gray-700/50"
-                    title="Match Events"
-                  >
-                    <Activity className="w-3 h-3" /> Events
-                  </button>
-                  <button
-                    onClick={() => setSelectedFixtureForShare(fixture)}
-                    className="text-xs text-indigo-400 hover:text-white flex items-center gap-1 bg-indigo-900/20 px-2 py-0.5 rounded border border-indigo-500/30"
-                    title="Share Result"
-                  >
-                    <Share2 className="w-3 h-3" /> Share
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => setSelectedFixtureForEvents(fixture)}
+                        className="text-xs text-gray-400 hover:text-white flex items-center gap-1 bg-gray-800/50 px-2 py-0.5 rounded border border-gray-700/50"
+                      >
+                        <Activity className="w-3 h-3" /> Events
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Match Events</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => setSelectedFixtureForShare(fixture)}
+                        className="text-xs text-indigo-400 hover:text-white flex items-center gap-1 bg-indigo-900/20 px-2 py-0.5 rounded border border-indigo-500/30"
+                      >
+                        <Share2 className="w-3 h-3" /> Share
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Share Result</TooltipContent>
+                  </Tooltip>
                 </div>
               )}
             </div>
@@ -157,7 +209,22 @@ export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingF
         "flex justify-between items-center px-4 py-2 border-b border-gray-800/50 transition-colors",
         homeWon ? "bg-emerald-500/10 text-emerald-400" : (fixture.isPlayed ? "bg-transparent text-gray-400" : "bg-transparent text-gray-200")
       )}>
-        <span className="font-medium text-sm truncate pr-2">{getTeamName(fixture.homeTeamId)}</span>
+        {editingTeam === 'home' ? (
+          <ModernSelect
+            className="flex-1 mr-2"
+            value={fixture.homeTeamId}
+            onChange={(val) => handleTeamSelect('home', val)}
+            options={teamOptions}
+          />
+        ) : (
+          <span 
+            className={cn("font-medium text-sm truncate pr-2", isAdmin && !fixture.isPlayed && "cursor-pointer hover:text-indigo-400")}
+            onDoubleClick={() => isAdmin && !fixture.isPlayed && setEditingTeam('home')}
+            title={isAdmin && !fixture.isPlayed ? "Double click to change team" : undefined}
+          >
+            {getTeamName(fixture.homeTeamId)}
+          </span>
+        )}
         <label htmlFor={`homeScore-${fixture.id}`} className="sr-only">Home Score</label>
         <input
           id={`homeScore-${fixture.id}`}
@@ -166,7 +233,7 @@ export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingF
           min="0"
           disabled={!fixture.isStarted || fixture.isPlayed || !isAdmin}
           className="w-12 bg-black/20 text-right font-bold outline-none focus:bg-black/40 focus:ring-1 focus:ring-indigo-500/50 rounded-md px-2 py-1 transition-all disabled:opacity-50"
-          value={isNaN(fixture.homeScore as number) ? '' : (fixture.homeScore ?? '')}
+          value={fixture.homeScore === null || isNaN(fixture.homeScore as number) ? '' : String(fixture.homeScore)}
           onChange={(e) => {
             const val = e.target.value === '' ? null : parseInt(e.target.value);
             handleScoreChange(fixture, true, val);
@@ -179,7 +246,22 @@ export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingF
         "flex justify-between items-center px-4 py-2 transition-colors",
         awayWon ? "bg-emerald-500/10 text-emerald-400" : (fixture.isPlayed ? "bg-transparent text-gray-400" : "bg-transparent text-gray-200")
       )}>
-        <span className="font-medium text-sm truncate pr-2">{getTeamName(fixture.awayTeamId)}</span>
+        {editingTeam === 'away' ? (
+          <ModernSelect
+            className="flex-1 mr-2"
+            value={fixture.awayTeamId}
+            onChange={(val) => handleTeamSelect('away', val)}
+            options={teamOptions}
+          />
+        ) : (
+          <span 
+            className={cn("font-medium text-sm truncate pr-2", isAdmin && !fixture.isPlayed && "cursor-pointer hover:text-indigo-400")}
+            onDoubleClick={() => isAdmin && !fixture.isPlayed && setEditingTeam('away')}
+            title={isAdmin && !fixture.isPlayed ? "Double click to change team" : undefined}
+          >
+            {getTeamName(fixture.awayTeamId)}
+          </span>
+        )}
         <label htmlFor={`awayScore-${fixture.id}`} className="sr-only">Away Score</label>
         <input
           id={`awayScore-${fixture.id}`}
@@ -188,7 +270,7 @@ export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingF
           min="0"
           disabled={!fixture.isStarted || fixture.isPlayed || !isAdmin}
           className="w-12 bg-black/20 text-right font-bold outline-none focus:bg-black/40 focus:ring-1 focus:ring-indigo-500/50 rounded-md px-2 py-1 transition-all disabled:opacity-50"
-          value={fixture.awayScore ?? ''}
+          value={fixture.awayScore === null || isNaN(fixture.awayScore as number) ? '' : String(fixture.awayScore)}
           onChange={(e) => {
             const val = e.target.value === '' ? null : parseInt(e.target.value);
             handleScoreChange(fixture, false, val);
@@ -200,17 +282,80 @@ export function SortableFixtureRow({ fixture, teams, settings, isAdmin, editingF
   );
 }
 
-export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerateFixtures, onGenerateKnockoutFixtures, onUpdateFixture, onUpdateFixtureDetails, onUpdateMatchdayDate, onToggleFixtureStarted, onToggleFixturePlayed, onAddGroup, onEditTeam, onAddMatchEvent, onRemoveMatchEvent, onReorderFixtures, onMoveFixture, onReassignFixturesFromMatchday, onRescheduleFixtures, matchFilter, nameDisplay }: FixturesProps) {
+export function DroppableMatchday({ day, children, isFirst }: { day: number, children: ReactNode, isFirst: boolean, key?: number | string }) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `matchday-${day}`,
+    data: { type: 'matchday', matchday: day }
+  });
+
+  return (
+    <div 
+      ref={setNodeRef} 
+      className={cn(
+        "bg-[#151821]/80 backdrop-blur-md rounded-2xl p-5 shadow-lg transition-colors duration-200",
+        isFirst ? "border-2 border-indigo-500/50 shadow-[0_0_20px_rgba(99,102,241,0.15)]" : "border border-gray-800/50",
+        isOver && "bg-[#1A1D24]/90 border-indigo-500/50"
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function Fixtures({ 
+  fixtures, 
+  teams, 
+  groups, 
+  settings, 
+  isAdmin, 
+  onGenerateFixtures, 
+  onGenerateKnockoutFixtures, 
+  onAddManualFixture, 
+  onUpdateFixtureTeams,
+  onRegenerateUnplayed,
+  onUpdateFixture, 
+  onUpdateFixtureDetails, 
+  onUpdateMatchdayDate, 
+  onUpdateMatchdayTitle,
+  onToggleFixtureStarted, 
+  onToggleFixturePlayed, 
+  onAddGroup, 
+  onEditTeam, 
+  onAddMatchEvent, 
+  onRemoveMatchEvent, 
+  onReorderFixtures, 
+  onMoveFixture, 
+  onReassignFixturesFromMatchday, 
+  onRescheduleFixtures, 
+  onSeedGroupStageResults,
+  onSeedKnockoutResults,
+  matchFilter, 
+  nameDisplay 
+}: FixturesProps) {
   const [stage, setStage] = useState<'group' | 'knockout'>('group');
   const [viewMode, setViewMode] = useState<'list' | 'bracket'>('list');
   const [selectedGroup, setSelectedGroup] = useState<string>('all');
   const [editingMatchday, setEditingMatchday] = useState<number | null>(null);
+  const [editingMatchdayTitle, setEditingMatchdayTitle] = useState<number | null>(null);
   const [editingFixtureId, setEditingFixtureId] = useState<string | null>(null);
   const [selectedFixtureForEvents, setSelectedFixtureForEvents] = useState<Fixture | null>(null);
   const [selectedFixtureForShare, setSelectedFixtureForShare] = useState<Fixture | null>(null);
   const [managingMatchday, setManagingMatchday] = useState<number | null>(null);
   const fixturesRef = useRef<HTMLDivElement>(null);
   const [selectedForDay, setSelectedForDay] = useState<string[]>([]);
+  const [isSeeding, setIsSeeding] = useState(false);
+  const [isKnockoutSeeding, setIsKnockoutSeeding] = useState(false);
+  const [manualFixtureModal, setManualFixtureModal] = useState<{
+    isOpen: boolean;
+    homeTeamId: string;
+    awayTeamId: string;
+    matchday: number;
+  }>({
+    isOpen: false,
+    homeTeamId: '',
+    awayTeamId: '',
+    matchday: 1
+  });
   const [pendingGoal, setPendingGoal] = useState<{
     fixture: Fixture;
     teamId: string;
@@ -449,7 +594,25 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                 </>
               )}
               {isAdmin && (
-                <>
+                <div className="flex gap-2">
+                  {stage === 'group' && fixtures.filter(f => f.matchday < 100 && !f.isPlayed).length > 0 && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button 
+                          onClick={async () => {
+                            setIsSeeding(true);
+                            await onSeedGroupStageResults();
+                            setIsSeeding(false);
+                          }}
+                          disabled={isSeeding}
+                          className="flex items-center gap-2 px-3 py-1.5 bg-amber-600/10 border border-amber-500/30 text-amber-400 rounded-lg hover:bg-amber-600/20 transition-all text-sm font-medium disabled:opacity-50"
+                        >
+                          <Dices className="w-4 h-4" /> Seed Results
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>Seed Group Results</TooltipContent>
+                    </Tooltip>
+                  )}
                   <button onClick={() => {
                       if (fixtures.length > 0) {
                         setConfirmModal({
@@ -469,24 +632,39 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                     <RefreshCw className="w-4 h-4" /> {fixtures.length > 0 ? 'Regenerate' : 'Generate'}
                   </button>
                   {fixtures.length > 0 && (
-                    <button 
-                      onClick={() => {
-                        setConfirmModal({
-                          isOpen: true,
-                          title: 'Recalculate Schedule',
-                          message: 'This will recalculate the schedule for all unplayed matches based on current settings. Manual overrides on unplayed days may be shifted. Continue?',
-                          confirmText: 'Recalculate',
-                          confirmStyle: 'warning',
-                          onConfirm: onRescheduleFixtures
-                        });
-                      }}
-                      className="flex items-center gap-2 px-4 py-2 bg-amber-600/10 border border-amber-500/30 text-amber-400 rounded-xl hover:bg-amber-600/20 transition-all duration-200 text-sm shadow-sm"
-                      title="Recalculate schedule for unplayed matches"
-                    >
-                      <RefreshCw className="w-4 h-4" /> Recalculate
-                    </button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button 
+                          onClick={() => {
+                            setConfirmModal({
+                              isOpen: true,
+                              title: 'Recalculate Schedule',
+                              message: 'This will recalculate the schedule for all unplayed matches based on current settings. Manual overrides on unplayed days may be shifted. Continue?',
+                              confirmText: 'Recalculate',
+                              confirmStyle: 'warning',
+                              onConfirm: onRescheduleFixtures
+                            });
+                          }}
+                          className="flex items-center gap-2 px-4 py-2 bg-amber-600/10 border border-amber-500/30 text-amber-400 rounded-xl hover:bg-amber-600/20 transition-all duration-200 text-sm shadow-sm"
+                        >
+                          <RefreshCw className="w-4 h-4" /> Recalculate
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>Recalculate schedule for unplayed matches</TooltipContent>
+                    </Tooltip>
                   )}
-                </>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button 
+                        onClick={() => setManualFixtureModal(prev => ({ ...prev, isOpen: true }))}
+                        className="flex items-center gap-2 px-4 py-2 bg-emerald-600/10 border border-emerald-500/30 text-emerald-400 rounded-xl hover:bg-emerald-600/20 transition-all duration-200 text-sm shadow-sm"
+                      >
+                        <Plus className="w-4 h-4" /> Manual Match
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Manually add a fixture</TooltipContent>
+                  </Tooltip>
+                </div>
               )}
             </div>
           </div>
@@ -501,10 +679,31 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
               if (!over) return;
               
               const activeFixture = fixtures.find(f => f.id === active.id);
+              if (!activeFixture) return;
+
+              // Check if dropped on a matchday container
+              if (over.data.current?.type === 'matchday') {
+                const targetMatchday = over.data.current.matchday;
+                if (activeFixture.matchday !== targetMatchday) {
+                  // Move to the end of the target matchday
+                  const targetDayFixtures = fixtures.filter(f => f.matchday === targetMatchday);
+                  onMoveFixture(activeFixture, targetMatchday, targetDayFixtures.length);
+                }
+                return;
+              }
+
               const overFixture = fixtures.find(f => f.id === over.id);
               
-              if (activeFixture && overFixture && activeFixture.id !== overFixture.id) {
-                onMoveFixture(activeFixture, overFixture.matchday, overFixture.order || 0);
+              if (overFixture && activeFixture.id !== overFixture.id) {
+                if (activeFixture.matchday === overFixture.matchday) {
+                  const dayFixtures = fixtures.filter(f => f.matchday === activeFixture.matchday).sort((a, b) => (a.order || 0) - (b.order || 0));
+                  const oldIndex = dayFixtures.findIndex(f => f.id === activeFixture.id);
+                  const newIndex = dayFixtures.findIndex(f => f.id === overFixture.id);
+                  const newFixtures = arrayMove(dayFixtures, oldIndex, newIndex);
+                  onReorderFixtures(activeFixture.matchday, newFixtures);
+                } else {
+                  onMoveFixture(activeFixture, overFixture.matchday, overFixture.order || 0);
+                }
               }
             }}>
               <div ref={fixturesRef} className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 p-4 bg-[#0B0E14]">
@@ -527,27 +726,55 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                   const isFirst = index === 0;
                   const matchdayDate = dayFixtures[0]?.date;
                   
+                  const customMatchday = settings.matchdaySettings?.customMatchdays?.find(m => m.matchday === day);
+                  const defaultTitle = `Round ${day.toString().padStart(2, '0')}`;
+                  const title = customMatchday?.title || defaultTitle;
+                  
                   return (
-                    <div key={day} className={cn(
-                      "bg-[#151821]/80 backdrop-blur-md rounded-2xl p-5 shadow-lg",
-                      isFirst ? "border-2 border-indigo-500/50 shadow-[0_0_20px_rgba(99,102,241,0.15)]" : "border border-gray-800/50"
-                    )}>
+                    <DroppableMatchday key={day} day={day} isFirst={isFirst}>
                       <div className="flex items-center justify-between mb-5">
                         <div className="flex items-center gap-2">
                           {isAdmin && (
-                            <button 
-                              onClick={() => {
-                                setManagingMatchday(day);
-                                setSelectedForDay(dayFixtures.map(f => f.id));
-                              }}
-                              className="text-gray-500 hover:text-indigo-400 transition-colors"
-                              title="Manage Matches for this Day"
-                            >
-                              <List className="w-3.5 h-3.5" />
-                            </button>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button 
+                                  onClick={() => {
+                                    setManagingMatchday(day);
+                                    setSelectedForDay(dayFixtures.map(f => f.id));
+                                  }}
+                                  className="text-gray-500 hover:text-indigo-400 transition-colors"
+                                >
+                                  <List className="w-3.5 h-3.5" />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent>Manage Matches for this Day</TooltipContent>
+                            </Tooltip>
                           )}
-                          <h3 className="text-center font-semibold text-gray-200 flex items-center gap-2 text-lg">
-                            Round {day.toString().padStart(2, '0')}
+                          <h3 
+                            className="text-center font-semibold text-gray-200 flex items-center gap-2 text-lg cursor-pointer select-none"
+                            onDoubleClick={() => isAdmin && setEditingMatchdayTitle(day)}
+                          >
+                            {editingMatchdayTitle === day ? (
+                              <input
+                                autoFocus
+                                className="bg-[#1A1D24] border border-indigo-500/50 rounded px-2 py-1 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                defaultValue={title}
+                                onBlur={(e) => {
+                                  onUpdateMatchdayTitle(day, e.target.value);
+                                  setEditingMatchdayTitle(null);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    onUpdateMatchdayTitle(day, e.currentTarget.value);
+                                    setEditingMatchdayTitle(null);
+                                  } else if (e.key === 'Escape') {
+                                    setEditingMatchdayTitle(null);
+                                  }
+                                }}
+                              />
+                            ) : (
+                              title
+                            )}
                           </h3>
                         </div>
                         {editingMatchday === day && isAdmin ? (
@@ -573,13 +800,17 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                           </div>
                         ) : (
                           isAdmin && (
-                            <button 
-                              onClick={() => setEditingMatchday(day)}
-                              className="text-gray-500 hover:text-indigo-400 transition-colors"
-                              title="Edit Matchday Date"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button 
+                                  onClick={() => setEditingMatchday(day)}
+                                  className="text-gray-500 hover:text-indigo-400 transition-colors"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent>Edit Matchday Date</TooltipContent>
+                            </Tooltip>
                           )
                         )}
                       </div>
@@ -591,15 +822,18 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                               key={fixture.id} 
                               fixture={fixture} 
                               teams={teams} 
+                              groups={groups}
                               settings={settings} 
                               isAdmin={isAdmin}
                               editingFixtureId={editingFixtureId} 
                               setEditingFixtureId={setEditingFixtureId} 
                               onUpdateFixture={onUpdateFixture} 
+                              onUpdateFixtureTeams={onUpdateFixtureTeams}
                               onUpdateFixtureDetails={onUpdateFixtureDetails} 
                               onToggleFixtureStarted={onToggleFixtureStarted} 
                               onToggleFixturePlayed={onToggleFixturePlayed} 
                               onAddMatchEvent={onAddMatchEvent} 
+                              onRegenerateUnplayed={onRegenerateUnplayed}
                               setSelectedFixtureForEvents={setSelectedFixtureForEvents} 
                               setSelectedFixtureForShare={setSelectedFixtureForShare}
                               getTeamName={getTeamName} 
@@ -610,7 +844,7 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                           ))}
                         </SortableContext>
                       </div>
-                    </div>
+                    </DroppableMatchday>
                   );
                 })}
               </div>
@@ -626,29 +860,41 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
               {fixtures.filter(f => f.matchday >= 100).length > 0 && (
                 <div className="flex items-center gap-3">
                   {isAdmin && (
-                    <button
-                      onClick={onGenerateKnockoutFixtures}
-                      className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600/20 text-indigo-400 rounded-lg hover:bg-indigo-600/30 transition-all text-sm font-medium border border-indigo-500/30"
-                      title="Generate Next Knockout Round"
-                    >
-                      <Trophy className="w-4 h-4" /> Next Round
-                    </button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={onGenerateKnockoutFixtures}
+                          className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600/20 text-indigo-400 rounded-lg hover:bg-indigo-600/30 transition-all text-sm font-medium border border-indigo-500/30"
+                        >
+                          <Trophy className="w-4 h-4" /> Next Round
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>Generate Next Knockout Round</TooltipContent>
+                    </Tooltip>
                   )}
                   <div className="flex bg-[#1A1D24]/80 backdrop-blur-md rounded-xl p-1 border border-gray-800/50 shadow-sm">
-                    <button 
-                      onClick={() => setViewMode('list')}
-                      className={cn("p-2 rounded-lg transition-all duration-200", viewMode === 'list' ? "bg-indigo-600/20 text-indigo-400" : "text-gray-400 hover:text-gray-200")}
-                      title="List View"
-                    >
-                      <List className="w-4 h-4" />
-                    </button>
-                    <button 
-                      onClick={() => setViewMode('bracket')}
-                      className={cn("p-2 rounded-lg transition-all duration-200", viewMode === 'bracket' ? "bg-indigo-600/20 text-indigo-400" : "text-gray-400 hover:text-gray-200")}
-                      title="Bracket View"
-                    >
-                      <GitMerge className="w-4 h-4" />
-                    </button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button 
+                          onClick={() => setViewMode('list')}
+                          className={cn("p-2 rounded-lg transition-all duration-200", viewMode === 'list' ? "bg-indigo-600/20 text-indigo-400" : "text-gray-400 hover:text-gray-200")}
+                        >
+                          <List className="w-4 h-4" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>List View</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button 
+                          onClick={() => setViewMode('bracket')}
+                          className={cn("p-2 rounded-lg transition-all duration-200", viewMode === 'bracket' ? "bg-indigo-600/20 text-indigo-400" : "text-gray-400 hover:text-gray-200")}
+                        >
+                          <GitMerge className="w-4 h-4" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>Bracket View</TooltipContent>
+                    </Tooltip>
                   </div>
                   <div className="flex gap-2">
                     <button onClick={handleExportPDF} className="flex items-center gap-2 px-3 py-1.5 bg-[#1A1D24]/80 backdrop-blur-md border border-gray-700/50 text-gray-300 rounded-lg hover:bg-gray-800 transition-all text-sm shadow-sm">
@@ -685,6 +931,26 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                 <Trophy className="w-4 h-4" /> Generate Knockout Fixtures
               </button>
               )}
+
+              {fixtures.filter(f => f.matchday >= 100 && !f.isPlayed).length > 0 && isAdmin && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button 
+                      onClick={async () => {
+                        setIsKnockoutSeeding(true);
+                        await onSeedKnockoutResults();
+                        setIsKnockoutSeeding(false);
+                      }}
+                      disabled={isKnockoutSeeding}
+                      className="flex items-center gap-2 px-4 py-2 bg-amber-600/10 border border-amber-500/30 text-amber-400 rounded-xl hover:bg-amber-600/20 transition-all duration-200 text-sm shadow-sm"
+                    >
+                      {isKnockoutSeeding ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Dices className="w-4 h-4" />}
+                      Seed Knockout Results
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Seed Knockout Results</TooltipContent>
+                </Tooltip>
+              )}
             </div>
           </div>
 
@@ -698,7 +964,7 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
             </div>
           ) : viewMode === 'bracket' ? (
             <div ref={fixturesRef} className="p-4 bg-[#0B0E14] rounded-3xl">
-              <KnockoutBracket fixtures={fixtures} teams={teams} />
+              <KnockoutBracket fixtures={fixtures} teams={teams} settings={settings} />
             </div>
           ) : (
             <div ref={fixturesRef} className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 p-4 bg-[#0B0E14]">
@@ -707,14 +973,69 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                 const isFirst = index === 0;
                 const matchdayDate = dayFixtures[0]?.date;
                 
+                const customMatchday = settings.matchdaySettings?.customMatchdays?.find(m => m.matchday === day);
+                const stageName = dayFixtures[0]?.stageName;
+                const getKnockoutTitle = () => {
+                  if (stageName) return stageName;
+                  
+                  // Calculate based on total unique pairings in this stage across all matchdays
+                  const knockoutFixtures = fixtures.filter(f => f.matchday >= 100);
+                  const currentStageFixtures = knockoutFixtures.filter(f => f.stageName === dayFixtures[0]?.stageName);
+                  
+                  // If we don't have a stageName, we have to guess based on the current matchday's pairings
+                  // but this is what caused the bug. Let's try to find all fixtures that seem to belong to this "round"
+                  // A round is usually a set of matchdays that are close to each other.
+                  // But the most reliable way is to have stageName on every fixture.
+                  
+                  const uniquePairings = new Set(dayFixtures.map(f => 
+                    [f.homeTeamId, f.awayTeamId].sort().join('-')
+                  )).size;
+                  
+                  const numMatches = dayFixtures.length;
+                  const legs = settings.knockoutStage?.numberOfLegs || 1;
+                  const effectiveMatches = numMatches / legs;
+
+                  // Fallback logic if stageName is missing
+                  if (effectiveMatches === 1 && uniquePairings === 1) return 'Final';
+                  if (effectiveMatches <= 2 && uniquePairings <= 2) return 'Semi-Finals';
+                  if (effectiveMatches <= 4 && uniquePairings <= 4) return 'Quarter-Finals';
+                  
+                  return `Round ${day - 100}`;
+                };
+                const defaultTitle = getKnockoutTitle();
+                const title = customMatchday?.title || defaultTitle;
+                
                 return (
                   <div key={day} className={cn(
                     "bg-[#151821]/80 backdrop-blur-md rounded-2xl p-5 shadow-lg",
                     isFirst ? "border-2 border-indigo-500/50 shadow-[0_0_20px_rgba(99,102,241,0.15)]" : "border border-gray-800/50"
                   )}>
                     <div className="flex items-center justify-between mb-5">
-                      <h3 className="text-center font-semibold text-gray-200 flex items-center gap-2 text-lg">
-                        {day === 101 ? 'Semi-Finals' : day === 102 ? 'Final' : `Round ${day - 100}`}
+                      <h3 
+                        className="text-center font-semibold text-gray-200 flex items-center gap-2 text-lg cursor-pointer select-none"
+                        onDoubleClick={() => isAdmin && setEditingMatchdayTitle(day)}
+                      >
+                        {editingMatchdayTitle === day ? (
+                          <input
+                            autoFocus
+                            className="bg-[#1A1D24] border border-indigo-500/50 rounded px-2 py-1 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            defaultValue={title}
+                            onBlur={(e) => {
+                              onUpdateMatchdayTitle(day, e.target.value);
+                              setEditingMatchdayTitle(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                onUpdateMatchdayTitle(day, e.currentTarget.value);
+                                setEditingMatchdayTitle(null);
+                              } else if (e.key === 'Escape') {
+                                setEditingMatchdayTitle(null);
+                              }
+                            }}
+                          />
+                        ) : (
+                          title
+                        )}
                       </h3>
                       {editingMatchday === day ? (
                         <div className="flex items-center gap-2">
@@ -736,133 +1057,46 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                           />
                         </div>
                       ) : (
-                        <button 
-                          onClick={() => setEditingMatchday(day)}
-                          className="text-gray-500 hover:text-indigo-400 transition-colors"
-                          title="Edit Matchday Date"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button 
+                              onClick={() => setEditingMatchday(day)}
+                              className="text-gray-500 hover:text-indigo-400 transition-colors"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>Edit Matchday Date</TooltipContent>
+                        </Tooltip>
                       )}
                     </div>
                     
                     <div className="space-y-4">
-                      {dayFixtures.map((fixture, fIndex) => {
-                        const homeWon = fixture.isPlayed && fixture.homeScore !== null && fixture.awayScore !== null && fixture.homeScore > fixture.awayScore;
-                        const awayWon = fixture.isPlayed && fixture.homeScore !== null && fixture.awayScore !== null && fixture.awayScore > fixture.homeScore;
-                        
-                        const pillColor = getGroupColor(fixture.groupId);
-
-                        return (
-                          <div key={fixture.id} className="rounded-xl border border-gray-800/50 bg-[#2A2D35]/50 backdrop-blur-sm transition-all duration-200 hover:border-gray-700">
-                            <div className={cn("text-center text-xs py-1.5 font-medium flex justify-between px-2 rounded-t-xl", pillColor)}>
-                              {editingFixtureId === fixture.id ? (
-                                <div className="flex items-center gap-1 w-full">
-                                  <select 
-                                    className="bg-[#1A1D24] border border-gray-700 rounded px-1 py-0.5 text-[10px] text-white max-w-[80px]"
-                                    defaultValue={fixture.pitchId}
-                                    onChange={(e) => onUpdateFixtureDetails(fixture.id, { pitchId: e.target.value })}
-                                  >
-                                    {settings.pitches?.map(p => (
-                                      <option key={p.id} value={p.id}>{p.name}</option>
-                                    ))}
-                                  </select>
-                                  <input 
-                                    id={`knockout-date-${fixture.id}`}
-                                    name={`knockout-date-${fixture.id}`}
-                                    type="date" 
-                                    className="bg-[#1A1D24] border border-gray-700 rounded px-1 py-0.5 text-[10px] text-white w-[80px]"
-                                    defaultValue={fixture.date}
-                                    onChange={(e) => onUpdateFixtureDetails(fixture.id, { date: e.target.value })}
-                                  />
-                                  <button onClick={() => setEditingFixtureId(null)} className="text-emerald-400 hover:text-emerald-300 ml-auto">
-                                    <Save className="w-3 h-3" />
-                                  </button>
-                                </div>
-                              ) : (
-                                <>
-                                  <div className="flex items-center gap-1">
-                                    <span>{getPitchName(fixture.pitchId)} | {fixture.date}</span>
-                                    <button onClick={() => setEditingFixtureId(fixture.id)} className="text-gray-500 hover:text-white ml-1">
-                                      <Pencil className="w-2.5 h-2.5" />
-                                    </button>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <span className={cn("px-1.5 rounded-md", fixture.isPlayed ? "bg-emerald-500/20 text-emerald-300" : fixture.isStarted ? "bg-amber-500/20 text-amber-300" : "bg-gray-500/20 text-gray-300")}>
-                                      {fixture.isPlayed ? 'Finished' : fixture.isStarted ? 'Ongoing' : 'Not Started'}
-                                    </span>
-                                    <button 
-                                      onClick={() => {
-                                        if (fixture.isPlayed) {
-                                          onToggleFixturePlayed(fixture.id);
-                                        } else if (fixture.isStarted) {
-                                          onToggleFixturePlayed(fixture.id);
-                                        } else {
-                                          onToggleFixtureStarted(fixture.id);
-                                        }
-                                      }}
-                                      className="text-xs text-indigo-400 hover:text-indigo-300 underline"
-                                    >
-                                      {fixture.isPlayed ? 'Reopen' : fixture.isStarted ? 'Finish' : 'Start'}
-                                    </button>
-                                    {(fixture.isStarted || fixture.isPlayed) && (
-                                      <button
-                                        onClick={() => setSelectedFixtureForEvents(fixture)}
-                                        className="text-xs text-gray-400 hover:text-white flex items-center gap-1 bg-gray-800/50 px-2 py-0.5 rounded border border-gray-700/50"
-                                        title="Match Events"
-                                      >
-                                        <Activity className="w-3 h-3" /> Events
-                                      </button>
-                                    )}
-                                  </div>
-                                </>
-                              )}
-                            </div>
-                            
-                            <div className={cn(
-                              "flex justify-between items-center px-4 py-2 border-b border-gray-800/50 transition-colors",
-                              homeWon ? "bg-emerald-500/10 text-emerald-400" : (fixture.isPlayed ? "bg-transparent text-gray-400" : "bg-transparent text-gray-200")
-                            )}>
-                              <span className="font-medium text-sm truncate pr-2">{getTeamName(fixture.homeTeamId)}</span>
-                              <input
-                                id={`knockout-homeScore-${fixture.id}`}
-                                name={`knockout-homeScore-${fixture.id}`}
-                                type="number"
-                                min="0"
-                                disabled={!fixture.isStarted || fixture.isPlayed || !isAdmin}
-                                className="w-12 bg-black/20 text-right font-bold outline-none focus:bg-black/40 focus:ring-1 focus:ring-indigo-500/50 rounded-md px-2 py-1 transition-all disabled:opacity-50"
-                                value={isNaN(fixture.homeScore as number) ? '' : (fixture.homeScore ?? '')}
-                                onChange={(e) => {
-                                  const val = e.target.value === '' ? null : parseInt(e.target.value);
-                                  handleScoreChange(fixture, true, val);
-                                }}
-                                placeholder="-"
-                              />
-                            </div>
-                            
-                            <div className={cn(
-                              "flex justify-between items-center px-4 py-2 transition-colors",
-                              awayWon ? "bg-emerald-500/10 text-emerald-400" : (fixture.isPlayed ? "bg-transparent text-gray-400" : "bg-transparent text-gray-200")
-                            )}>
-                              <span className="font-medium text-sm truncate pr-2">{getTeamName(fixture.awayTeamId)}</span>
-                              <input
-                                id={`knockout-awayScore-${fixture.id}`}
-                                name={`knockout-awayScore-${fixture.id}`}
-                                type="number"
-                                min="0"
-                                disabled={!fixture.isStarted || fixture.isPlayed || !isAdmin}
-                                className="w-12 bg-black/20 text-right font-bold outline-none focus:bg-black/40 focus:ring-1 focus:ring-indigo-500/50 rounded-md px-2 py-1 transition-all disabled:opacity-50"
-                                value={fixture.awayScore ?? ''}
-                                onChange={(e) => {
-                                  const val = e.target.value === '' ? null : parseInt(e.target.value);
-                                  handleScoreChange(fixture, false, val);
-                                }}
-                                placeholder="-"
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
+                      {dayFixtures.map((fixture) => (
+                        <SortableFixtureRow 
+                          key={fixture.id} 
+                          fixture={fixture} 
+                          teams={teams} 
+                          groups={groups}
+                          settings={settings} 
+                          isAdmin={isAdmin} 
+                          editingFixtureId={editingFixtureId} 
+                          setEditingFixtureId={setEditingFixtureId} 
+                          onUpdateFixture={onUpdateFixture} 
+                          onUpdateFixtureTeams={onUpdateFixtureTeams}
+                          onUpdateFixtureDetails={onUpdateFixtureDetails} 
+                          onToggleFixtureStarted={onToggleFixtureStarted} 
+                          onToggleFixturePlayed={onToggleFixturePlayed} 
+                          onAddMatchEvent={onAddMatchEvent} 
+                          onRegenerateUnplayed={onRegenerateUnplayed}
+                          setSelectedFixtureForEvents={setSelectedFixtureForEvents} 
+                          setSelectedFixtureForShare={setSelectedFixtureForShare}
+                          getTeamName={getTeamName} 
+                          getPitchName={getPitchName} 
+                          getGroupColor={getGroupColor} 
+                          handleScoreChange={handleScoreChange} 
+                        />
+                      ))}
                     </div>
                   </div>
                 );
@@ -1087,6 +1321,78 @@ export function Fixtures({ fixtures, teams, groups, settings, isAdmin, onGenerat
                     Skip / Own Goal
                   </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {manualFixtureModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-[#151821] w-full max-w-md rounded-2xl border border-gray-800 shadow-2xl overflow-hidden flex flex-col">
+            <div className="p-6 border-b border-gray-800 flex justify-between items-center bg-[#1A1D24]">
+              <h3 className="text-xl font-bold text-white">Manual Match</h3>
+              <button 
+                onClick={() => setManualFixtureModal(prev => ({ ...prev, isOpen: false }))} 
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-1">Home Team</label>
+                <ModernSelect
+                  value={manualFixtureModal.homeTeamId}
+                  onChange={(val) => setManualFixtureModal(prev => ({ ...prev, homeTeamId: val }))}
+                  options={[
+                    { value: '', label: 'Select Home Team' },
+                    ...teams.map(t => ({ value: t.id, label: t.name }))
+                  ]}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-1">Away Team</label>
+                <ModernSelect
+                  value={manualFixtureModal.awayTeamId}
+                  onChange={(val) => setManualFixtureModal(prev => ({ ...prev, awayTeamId: val }))}
+                  options={[
+                    { value: '', label: 'Select Away Team' },
+                    ...teams.map(t => ({ value: t.id, label: t.name }))
+                  ]}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-1">Matchday</label>
+                <input 
+                  type="number"
+                  min="1"
+                  className="w-full bg-[#1A1D24] border border-gray-800 rounded-xl px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500/50 outline-none transition-all"
+                  value={manualFixtureModal.matchday}
+                  onChange={(e) => setManualFixtureModal(prev => ({ ...prev, matchday: parseInt(e.target.value) }))}
+                />
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-800 bg-[#1A1D24] flex justify-end gap-3">
+              <button 
+                onClick={() => setManualFixtureModal(prev => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 text-gray-400 hover:text-white transition-colors text-sm font-medium"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={() => {
+                  if (manualFixtureModal.homeTeamId && manualFixtureModal.awayTeamId && manualFixtureModal.homeTeamId !== manualFixtureModal.awayTeamId) {
+                    onAddManualFixture(manualFixtureModal.homeTeamId, manualFixtureModal.awayTeamId, manualFixtureModal.matchday);
+                    setManualFixtureModal(prev => ({ ...prev, isOpen: false }));
+                  } else {
+                    alert("Please select two different teams.");
+                  }
+                }}
+                disabled={!manualFixtureModal.homeTeamId || !manualFixtureModal.awayTeamId}
+                className="px-6 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-all duration-200 text-sm font-semibold shadow-lg shadow-emerald-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Add Fixture
+              </button>
             </div>
           </div>
         </div>

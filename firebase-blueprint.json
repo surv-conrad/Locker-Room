@@ -187,6 +187,19 @@
         "userId": { "type": "string" }
       },
       "required": ["userId"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "An immutable log of actions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "action": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "userId": { "type": "string" },
+        "details": { "type": "string" }
+      },
+      "required": ["id", "action", "timestamp", "userId", "details"]
     }
   },
   "firestore": {
@@ -209,6 +222,10 @@
     "/users/{userId}/settings/current": {
       "schema": "Settings",
       "description": "Settings for a user's tournament"
+    },
+    "/users/{userId}/auditLogs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Audit logs for a user's tournament"
     }
   }
 }

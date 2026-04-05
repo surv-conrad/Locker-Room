@@ -18,10 +18,13 @@ import { DashboardModal } from './components/DashboardModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ComingSoonModal } from './components/ComingSoonModal';
 import { AdminPanel } from './components/AdminPanel';
+import { downloadBackup } from './services/backupService';
 import { Settings as SettingsIcon, Users, CalendarDays, Trophy, Code2, ExternalLink, Sun, BarChart2, LogIn, LogOut, Loader2, Book, Shield, Download, Image as ImageIcon } from 'lucide-react';
 import { cn } from './utils';
 import { Settings } from './types';
 import { signInWithGoogle, logout } from './firebase';
+import { Toaster } from 'sonner';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './components/Tooltip';
 
 type Tab = 'table' | 'teams' | 'fixtures' | 'stats' | 'manual';
 
@@ -40,16 +43,21 @@ export default function App() {
     addTeam,
     editTeam,
     deleteTeam,
+    deleteTournament,
     addGroup,
     deleteGroup,
     generateFixtures,
+    addManualFixture,
     updateFixture,
     updateFixtureDetails,
     updateMatchdayDate,
+    updateMatchdayTitle,
     toggleFixtureStarted,
     toggleFixturePlayed,
     getLeagueTable,
     generateKnockoutFixtures,
+    seedGroupStageResults,
+    seedKnockoutResults,
     generateTestData,
     addMatchEvent,
     removeMatchEvent,
@@ -60,6 +68,8 @@ export default function App() {
     reorderTeams,
     reorderFixtures,
     moveFixture,
+    updateFixtureTeams,
+    regenerateUnplayedFixtures,
     toggleRole,
     publish,
     lastPublished,
@@ -296,7 +306,9 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0B0E14] text-gray-100 font-sans flex selection:bg-indigo-500/30">
+    <TooltipProvider>
+      <div className="min-h-screen bg-[#0B0E14] text-gray-100 font-sans flex selection:bg-indigo-500/30">
+        <Toaster position="top-right" richColors />
       {/* Sidebar */}
       <aside className="w-16 bg-[#151821] border-r border-gray-800 flex flex-col items-center py-4 gap-8 z-40 flex-shrink-0">
         <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-bold shadow-lg shadow-indigo-900/20">
@@ -307,43 +319,56 @@ export default function App() {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  "p-3 rounded-xl transition-all duration-200 group relative",
-                  isActive
-                    ? "bg-indigo-600/10 text-indigo-400"
-                    : "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50"
-                )}
-                title={tab.label}
-              >
-                <Icon className="w-5 h-5" />
-                {/* Tooltip */}
-                <div className="absolute left-full ml-4 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50">
+              <Tooltip key={tab.id}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setActiveTab(tab.id)}
+                    className={cn(
+                      "p-3 rounded-xl transition-all duration-200 group relative",
+                      isActive
+                        ? "bg-indigo-600/10 text-indigo-400"
+                        : "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50"
+                    )}
+                  >
+                    <Icon className="w-5 h-5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">
                   {tab.label}
-                </div>
-              </button>
+                </TooltipContent>
+              </Tooltip>
             );
           })}
           <div className="w-8 h-px bg-gray-800 my-2" />
           {isAdmin && (
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              className="p-3 rounded-xl text-gray-500 hover:text-gray-300 hover:bg-gray-800/50 transition-all duration-200"
-              title="Settings"
-            >
-              <SettingsIcon className="w-5 h-5" />
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setIsSettingsOpen(true)}
+                  className="p-3 rounded-xl text-gray-500 hover:text-gray-300 hover:bg-gray-800/50 transition-all duration-200"
+                >
+                  <SettingsIcon className="w-5 h-5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                Settings
+              </TooltipContent>
+            </Tooltip>
           )}
           {isSuperAdmin && (
-            <button
-              onClick={() => setIsAdminPanelOpen(true)}
-              className="p-3 rounded-xl text-gray-500 hover:text-indigo-400 hover:bg-gray-800/50 transition-all duration-200"
-              title="Admin Panel"
-            >
-              <Shield className="w-5 h-5" />
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setIsAdminPanelOpen(true)}
+                  className="p-3 rounded-xl text-gray-500 hover:text-indigo-400 hover:bg-gray-800/50 transition-all duration-200"
+                >
+                  <Shield className="w-5 h-5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                Admin Panel
+              </TooltipContent>
+            </Tooltip>
           )}
         </nav>
       </aside>
@@ -374,16 +399,22 @@ export default function App() {
                   {isAdmin ? 'Admin' : 'Viewer'}
                 </span>
                 {isSuperAdmin && (
-                  <button 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleRole();
-                    }}
-                    className="ml-1 p-1 hover:bg-gray-700 rounded-md transition-colors text-indigo-400"
-                    title="Toggle Role (Super Admin Only)"
-                  >
-                    <SettingsIcon className="w-3 h-3" />
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleRole();
+                        }}
+                        className="ml-1 p-1 hover:bg-gray-700 rounded-md transition-colors text-indigo-400"
+                      >
+                        <SettingsIcon className="w-3 h-3" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      Toggle Role (Super Admin Only)
+                    </TooltipContent>
+                  </Tooltip>
                 )}
               </div>
             )}
@@ -493,26 +524,28 @@ export default function App() {
               </div>
               
               <div className="flex flex-wrap items-center gap-3 text-sm">
-                <div className="flex bg-[#1A1D24]/80 backdrop-blur-md rounded-xl p-1 border border-gray-800/50 shadow-sm">
-                  <button 
-                    onClick={() => setMatchFilter('all')}
-                    className={cn("px-3 py-1.5 rounded-lg transition-all duration-200", matchFilter === 'all' ? "bg-indigo-600/20 text-indigo-400 font-medium" : "text-gray-400 hover:text-gray-200")}
-                  >
-                    All matches
-                  </button>
-                  <button 
-                    onClick={() => setMatchFilter('hide_past')}
-                    className={cn("px-3 py-1.5 rounded-lg transition-all duration-200", matchFilter === 'hide_past' ? "bg-indigo-600/20 text-indigo-400 font-medium" : "text-gray-400 hover:text-gray-200")}
-                  >
-                    Hide past matches
-                  </button>
-                  <button 
-                    onClick={() => setMatchFilter('current')}
-                    className={cn("px-3 py-1.5 rounded-lg transition-all duration-200", matchFilter === 'current' ? "bg-indigo-600/20 text-indigo-400 font-medium" : "text-gray-400 hover:text-gray-200")}
-                  >
-                    Current matches
-                  </button>
-                </div>
+                {activeTab === 'fixtures' && (
+                  <div className="flex bg-[#1A1D24]/80 backdrop-blur-md rounded-xl p-1 border border-gray-800/50 shadow-sm">
+                    <button 
+                      onClick={() => setMatchFilter('all')}
+                      className={cn("px-3 py-1.5 rounded-lg transition-all duration-200", matchFilter === 'all' ? "bg-indigo-600/20 text-indigo-400 font-medium" : "text-gray-400 hover:text-gray-200")}
+                    >
+                      All matches
+                    </button>
+                    <button 
+                      onClick={() => setMatchFilter('hide_past')}
+                      className={cn("px-3 py-1.5 rounded-lg transition-all duration-200", matchFilter === 'hide_past' ? "bg-indigo-600/20 text-indigo-400 font-medium" : "text-gray-400 hover:text-gray-200")}
+                    >
+                      Hide past matches
+                    </button>
+                    <button 
+                      onClick={() => setMatchFilter('current')}
+                      className={cn("px-3 py-1.5 rounded-lg transition-all duration-200", matchFilter === 'current' ? "bg-indigo-600/20 text-indigo-400 font-medium" : "text-gray-400 hover:text-gray-200")}
+                    >
+                      Current matches
+                    </button>
+                  </div>
+                )}
                 <div className="flex bg-[#1A1D24]/80 backdrop-blur-md rounded-xl p-1 border border-gray-800/50 shadow-sm">
                   <button 
                     onClick={() => setNameDisplay('team')}
@@ -564,9 +597,13 @@ export default function App() {
                   isAdmin={isAdmin}
                   onGenerateFixtures={generateFixtures} 
                   onGenerateKnockoutFixtures={generateKnockoutFixtures}
+                  onAddManualFixture={addManualFixture}
+                  onUpdateFixtureTeams={updateFixtureTeams}
+                  onRegenerateUnplayed={regenerateUnplayedFixtures}
                   onUpdateFixture={updateFixture} 
                   onUpdateFixtureDetails={updateFixtureDetails}
                   onUpdateMatchdayDate={updateMatchdayDate}
+                  onUpdateMatchdayTitle={updateMatchdayTitle}
                   onToggleFixtureStarted={toggleFixtureStarted}
                   onToggleFixturePlayed={toggleFixturePlayed}
                   onAddGroup={addGroup}
@@ -577,6 +614,8 @@ export default function App() {
                   onMoveFixture={moveFixture}
                   onReassignFixturesFromMatchday={reassignFixturesFromMatchday}
                   onRescheduleFixtures={rescheduleFixtures}
+                  onSeedGroupStageResults={seedGroupStageResults}
+                  onSeedKnockoutResults={seedKnockoutResults}
                   matchFilter={matchFilter}
                   nameDisplay={nameDisplay}
                 />
@@ -613,6 +652,7 @@ export default function App() {
           settings={settings}
           onSave={handleUpdateSettings}
           onClose={() => setIsSettingsOpen(false)}
+          onDeleteTournament={deleteTournament}
         />
       )}
 
@@ -634,6 +674,7 @@ export default function App() {
         <AdminPanel
           users={allUsers}
           onUpdateRole={updateUserRole}
+          onDownloadBackup={() => tournamentId && downloadBackup(tournamentId)}
           onClose={() => setIsAdminPanelOpen(false)}
         />
       )}
@@ -657,6 +698,7 @@ export default function App() {
           onClose={() => setComingSoonFeature(null)}
         />
       )}
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }

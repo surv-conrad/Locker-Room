@@ -6,6 +6,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { cn } from '../utils';
 import { exportAsImage } from '../utils/exportImage';
+import { Tooltip, TooltipContent, TooltipTrigger } from './Tooltip';
 
 interface LeagueTableProps {
   table: LeagueRow[];
@@ -175,13 +176,48 @@ export function LeagueTable({ table, fixtures, groups, isAdmin }: LeagueTablePro
                     <tr className="bg-[#1A1D24]/50 border-b border-gray-800/50">
                       <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider w-16 text-center">Pos</th>
                       <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Team</th>
-                      <th className="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Played">P</th>
-                      <th className="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Won">W</th>
-                      <th className="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Drawn">D</th>
-                      <th className="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Lost">L</th>
-                      <th className="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Goals For">GF</th>
-                      <th className="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Goals Against">GA</th>
-                      <th className="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Goal Difference">GD</th>
+                      <th className="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">
+                        <Tooltip>
+                          <TooltipTrigger asChild><span className="cursor-help">P</span></TooltipTrigger>
+                          <TooltipContent>Played</TooltipContent>
+                        </Tooltip>
+                      </th>
+                      <th className="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">
+                        <Tooltip>
+                          <TooltipTrigger asChild><span className="cursor-help">W</span></TooltipTrigger>
+                          <TooltipContent>Won</TooltipContent>
+                        </Tooltip>
+                      </th>
+                      <th className="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">
+                        <Tooltip>
+                          <TooltipTrigger asChild><span className="cursor-help">D</span></TooltipTrigger>
+                          <TooltipContent>Drawn</TooltipContent>
+                        </Tooltip>
+                      </th>
+                      <th className="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">
+                        <Tooltip>
+                          <TooltipTrigger asChild><span className="cursor-help">L</span></TooltipTrigger>
+                          <TooltipContent>Lost</TooltipContent>
+                        </Tooltip>
+                      </th>
+                      <th className="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">
+                        <Tooltip>
+                          <TooltipTrigger asChild><span className="cursor-help">GF</span></TooltipTrigger>
+                          <TooltipContent>Goals For</TooltipContent>
+                        </Tooltip>
+                      </th>
+                      <th className="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">
+                        <Tooltip>
+                          <TooltipTrigger asChild><span className="cursor-help">GA</span></TooltipTrigger>
+                          <TooltipContent>Goals Against</TooltipContent>
+                        </Tooltip>
+                      </th>
+                      <th className="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">
+                        <Tooltip>
+                          <TooltipTrigger asChild><span className="cursor-help">GD</span></TooltipTrigger>
+                          <TooltipContent>Goal Difference</TooltipContent>
+                        </Tooltip>
+                      </th>
                       <th className="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">Last 5</th>
                       <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">Pts</th>
                     </tr>

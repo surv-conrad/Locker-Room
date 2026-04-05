@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import Papa from 'papaparse';
+import { toast } from 'sonner';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -8,6 +9,7 @@ import { Trash2, Plus, Pencil, X, ClipboardList, Users, FolderPlus, Upload, Imag
 import { TeamSheetModal } from './TeamSheetModal';
 import { ConfirmModal } from './ConfirmModal';
 import { exportAsImage } from '../utils/exportImage';
+import { Tooltip, TooltipContent, TooltipTrigger } from './Tooltip';
 
 interface TeamsProps {
   teams: Team[];
@@ -66,27 +68,39 @@ const SortableTeamRow: React.FC<SortableTeamRowProps> = ({ team, groups, isEditi
       {isAdmin && (
         <td className="px-6 py-4 text-right">
           <div className="flex items-center justify-end gap-2">
-            <button
-              onClick={() => exportAsImage(rowRef.current, team.name)}
-              className="text-gray-400 hover:text-white p-2 rounded-xl hover:bg-gray-700 transition-colors"
-              title="Export Team as Image"
-            >
-              <ImageIcon className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => onEditClick(team)}
-              className="text-blue-400 hover:text-blue-300 p-2 rounded-xl hover:bg-blue-400/10 transition-colors"
-              title="Edit Team"
-            >
-              <Pencil className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => onDeleteClick(team.id)}
-              className="text-red-400 hover:text-red-300 p-2 rounded-xl hover:bg-red-400/10 transition-colors"
-              title="Delete Team"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => exportAsImage(rowRef.current, team.name)}
+                  className="text-gray-400 hover:text-white p-2 rounded-xl hover:bg-gray-700 transition-colors"
+                >
+                  <ImageIcon className="w-4 h-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Export Team as Image</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => onEditClick(team)}
+                  className="text-blue-400 hover:text-blue-300 p-2 rounded-xl hover:bg-blue-400/10 transition-colors"
+                >
+                  <Pencil className="w-4 h-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Edit Team</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => onDeleteClick(team.id)}
+                  className="text-red-400 hover:text-red-300 p-2 rounded-xl hover:bg-red-400/10 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Delete Team</TooltipContent>
+            </Tooltip>
           </div>
         </td>
       )}
@@ -117,12 +131,18 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
       skipEmptyLines: true,
       complete: (results) => {
         (results.data as any[]).forEach((row: any) => {
+          const name = row.name || row.Name;
+          const initial = row.initial || row.Initial;
+          if (!name || !initial) {
+            console.warn('Skipping invalid row:', row);
+            return;
+          }
           onAddTeam({
-            name: row.name,
-            initial: row.initial,
-            manager: row.manager,
-            phone: row.phone,
-            groupId: groups.find(g => g.name === row.group)?.id
+            name: name,
+            initial: initial,
+            manager: row.manager || row.Manager || '',
+            phone: row.phone || row.Phone || '',
+            groupId: groups.find(g => g.name === (row.group || row.Group))?.id || null
           });
         });
       }
@@ -150,10 +170,12 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
     if (!name || !initial) return;
     
     if (editingId) {
-      onEditTeam(editingId, { name, initial, manager, phone, groupId: groupId || undefined });
+      onEditTeam(editingId, { name, initial, manager, phone, groupId: groupId || null });
+      toast.success('Team updated successfully');
       setEditingId(null);
     } else {
-      onAddTeam({ name, initial, manager, phone, groupId: groupId || undefined });
+      onAddTeam({ name, initial, manager, phone, groupId: groupId || null });
+      toast.success('Team added successfully');
     }
     
     setName('');
@@ -167,6 +189,7 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
     e.preventDefault();
     if (!groupName) return;
     onAddGroup(groupName);
+    toast.success('Group added');
     setGroupName('');
   };
 
@@ -199,30 +222,42 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
             </h2>
             <div className="flex gap-2">
               <input type="file" id="csv-import" name="csvImport" ref={fileInputRef} onChange={handleFileUpload} accept=".csv" className="hidden" />
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="text-sm text-gray-300 hover:text-white flex items-center gap-1 bg-[#1A1D24]/80 px-3 py-1.5 rounded-xl border border-gray-700/50 transition-all duration-200 shadow-sm"
-                title="Import teams from CSV"
-              >
-                <Upload className="w-4 h-4" /> Import CSV
-              </button>
-              <button
-                onClick={onGenerateTestData}
-                className="text-sm text-indigo-400 hover:text-indigo-300 flex items-center gap-1 bg-indigo-600/10 px-3 py-1.5 rounded-xl border border-indigo-500/30 transition-all duration-200 shadow-sm"
-                title="Generate teams and groups with players"
-              >
-                Generate Test Data
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="text-sm text-gray-300 hover:text-white flex items-center gap-1 bg-[#1A1D24]/80 px-3 py-1.5 rounded-xl border border-gray-700/50 transition-all duration-200 shadow-sm"
+                  >
+                    <Upload className="w-4 h-4" /> Import CSV
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Import teams from CSV</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={onGenerateTestData}
+                    className="text-sm text-indigo-400 hover:text-indigo-300 flex items-center gap-1 bg-indigo-600/10 px-3 py-1.5 rounded-xl border border-indigo-500/30 transition-all duration-200 shadow-sm"
+                  >
+                    Generate Test Data
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Generate teams and groups with players</TooltipContent>
+              </Tooltip>
               {teams.length > 0 && (
                 <div className="relative">
                   {!showFillConfirm ? (
-                    <button
-                      onClick={() => setShowFillConfirm(true)}
-                      className="text-sm text-emerald-400 hover:text-emerald-300 flex items-center gap-1 bg-emerald-600/10 px-3 py-1.5 rounded-xl border border-emerald-500/30 transition-all duration-200 shadow-sm"
-                      title="Fill existing teams with players"
-                    >
-                      Fill Team Sheets
-                    </button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={() => setShowFillConfirm(true)}
+                          className="text-sm text-emerald-400 hover:text-emerald-300 flex items-center gap-1 bg-emerald-600/10 px-3 py-1.5 rounded-xl border border-emerald-500/30 transition-all duration-200 shadow-sm"
+                        >
+                          Fill Team Sheets
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>Fill existing teams with players</TooltipContent>
+                    </Tooltip>
                   ) : (
                     <div className="absolute right-0 top-0 z-10 bg-[#1A1D24] border border-emerald-500/30 rounded-xl p-2 shadow-xl flex items-center gap-2 min-w-[200px]">
                       <span className="text-[10px] text-emerald-400 font-medium">Overwrite all?</span>
@@ -312,11 +347,12 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
               <select
                 id="team-group"
                 name="teamGroup"
-                className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner"
+                disabled={groups.length === 0}
+                className="w-full bg-[#1A1D24]/50 border border-gray-700/50 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all shadow-inner disabled:opacity-50 disabled:cursor-not-allowed"
                 value={groupId}
                 onChange={(e) => setGroupId(e.target.value)}
               >
-                <option value="">No Group</option>
+                <option value="">{groups.length === 0 ? 'Not applicable' : 'No Group'}</option>
                 {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
             </div>
@@ -357,7 +393,7 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
             {groups.map(g => (
               <div key={g.id} className="flex items-center gap-2 bg-[#1A1D24] px-3 py-1.5 rounded-lg border border-gray-700/50">
                 <span className="text-gray-300 text-sm">{g.name}</span>
-                <button onClick={() => onDeleteGroup(g.id)} className="text-gray-500 hover:text-red-400"><X className="w-4 h-4" /></button>
+                <button onClick={() => { onDeleteGroup(g.id); toast.success('Group deleted'); }} className="text-gray-500 hover:text-red-400"><X className="w-4 h-4" /></button>
               </div>
             ))}
           </div>
@@ -430,7 +466,13 @@ export function Teams({ teams, groups, settings, isAdmin, onAddTeam, onEditTeam,
         isOpen={!!teamToDelete}
         title="Delete Team"
         message="Are you sure you want to delete this team? This will reset all fixtures."
-        onConfirm={() => teamToDelete && onDeleteTeam(teamToDelete)}
+        onConfirm={() => {
+          if (teamToDelete) {
+            onDeleteTeam(teamToDelete);
+            toast.success('Team deleted');
+            setTeamToDelete(null);
+          }
+        }}
         onCancel={() => setTeamToDelete(null)}
       />
 

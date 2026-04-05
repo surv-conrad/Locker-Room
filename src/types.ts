@@ -51,6 +51,10 @@ export interface Fixture {
   groupId?: string;
   events?: MatchEvent[];
   order?: number;
+  stageName?: string;
+  legs?: number;
+  tieId?: string;
+  isManual?: boolean;
 }
 
 export interface PlayerStat {
@@ -72,6 +76,7 @@ export interface Pitch {
 export interface StageSettings {
   numberOfWinners: number;
   numberOfLegs: 1 | 2;
+  numberOfMatchdays?: number;
 }
 
 export interface Settings {
@@ -94,6 +99,7 @@ export interface Settings {
       matchday: number; 
       date: string; 
       time?: string;
+      title?: string;
       matchesPerDay?: number;
       restingDays?: number;
     }[];

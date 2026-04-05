@@ -3,173 +3,80 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: users/{userId}
-    // Fields: name (string, <50), email (string, email), role (string, enum), uid (string, immutable)
-    //
-    // Collection: users/{userId}/groups/{groupId}
-    // Fields: id (string, immutable), name (string, <100), userId (string, immutable)
-    //
-    // Collection: users/{userId}/teams/{teamId}
-    // Fields: id (string, immutable), name (string, <100), initial (string, <10), manager (string, <100), phone (string, <20), groupId (string, optional), userId (string, immutable)
-    //
-    // Collection: users/{userId}/fixtures/{fixtureId}
-    // Fields: id (string, immutable), matchday (number), homeTeamId (string), awayTeamId (string), isPlayed (bool), isStarted (bool), date (string, <20), userId (string, immutable)
-    //
-    // Collection: users/{userId}/settings/{settingId}
-    // Fields: userId (string, immutable), tournamentName (string, <100)
-    //
-    // ===============================================================
-
-    // ===============================================================
     // Helper Functions
     // ===============================================================
+
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
+    function isUser(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function getUserData(userId) {
+      return get(/databases/$(database)/documents/users/$(userId)).data;
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && 
+        (
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData(request.auth.uid).role == 'super_admin') ||
+          (request.auth.token.email == "conradenock@gmail.com" && request.auth.token.email_verified == true)
+        );
+    }
+
     function isAdmin() {
-      let userDocPath = /databases/$(database)/documents/users/$(request.auth.uid);
-      return isAuthenticated() && exists(userDocPath);
-    }
-
-    function hasRequiredFields(fields) {
-      return request.resource.data.keys().hasAll(fields);
-    }
-
-    function hasOnlyAllowedFields(fields) {
-      return request.resource.data.keys().hasOnly(fields);
-    }
-
-    function validString(field, minLen, maxLen) {
-      return request.resource.data[field] is string && 
-             request.resource.data[field].size() >= minLen && 
-             request.resource.data[field].size() <= maxLen;
-    }
-
-    function uidUnchanged(userId) {
-      return !('userId' in request.resource.data) || request.resource.data.userId == userId;
-    }
-
-    // ===============================================================
-    // Domain Validators
-    // ===============================================================
-
-    function isValidUser() {
-      return hasOnlyAllowedFields(['name', 'email', 'role', 'uid']) &&
-             validString('name', 1, 100) &&
-             request.resource.data.email is string &&
-             request.resource.data.role in ['admin', 'superadmin', 'viewer', 'editor'] &&
-             request.resource.data.uid is string &&
-             request.resource.data.uid == request.auth.uid;
-    }
-
-    function isValidUserForAdmin() {
-      return request.resource.data.role in ['admin', 'superadmin', 'viewer', 'editor'];
-    }
-
-    function isValidGroup(userId) {
-      return hasOnlyAllowedFields(['id', 'name', 'userId']) &&
-             request.resource.data.userId == userId &&
-             validString('name', 1, 100) &&
-             request.resource.data.id is string &&
-             exists(/databases/$(database)/documents/users/$(userId));
-    }
-
-    function isValidTeam(userId) {
-      return hasOnlyAllowedFields(['id', 'name', 'initial', 'manager', 'phone', 'groupId', 'userId', 'players', 'pitchSize', 'pitchScrollPosition']) &&
-             request.resource.data.userId == userId &&
-             validString('name', 1, 100) &&
-             validString('initial', 1, 10) &&
-             (request.resource.data.manager is string ? request.resource.data.manager.size() < 100 : true) &&
-             (request.resource.data.phone is string ? request.resource.data.phone.size() < 20 : true) &&
-             (request.resource.data.id is string ? request.resource.data.id.size() < 50 : true) &&
-             exists(/databases/$(database)/documents/users/$(userId));
-    }
-
-    function isValidFixture(userId) {
-      return hasOnlyAllowedFields(['id', 'matchday', 'homeTeamId', 'awayTeamId', 'isPlayed', 'isStarted', 'date', 'time', 'userId', 'homeScore', 'awayScore', 'events', 'pitchId', 'order', 'groupId']) &&
-             request.resource.data.userId == userId &&
-             (request.resource.data.id is string ? request.resource.data.id.size() < 50 : true) &&
-             request.resource.data.matchday is number;
-    }
-
-    function isValidSettings(userId) {
-      return hasOnlyAllowedFields(['userId', 'tournamentName', 'logoUrl', 'description', 'numberOfTeams', 'numberOfPitches', 'pitches', 'tieBreaker', 'primaryColor', 'matchdaySettings', 'groupStage', 'knockoutStage', 'playerSettings', 'startDate', 'startTime', 'publishedAt']) &&
-             request.resource.data.userId == userId &&
-             (request.resource.data.tournamentName is string ? request.resource.data.tournamentName.size() < 100 : true) &&
-             (request.resource.data.logoUrl is string ? request.resource.data.logoUrl.size() < 500 : true) &&
-             (request.resource.data.description is string ? request.resource.data.description.size() < 1000 : true);
+      return isSuperAdmin() || (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData(request.auth.uid).role == 'admin');
     }
 
     // ===============================================================
     // Rules
     // ===============================================================
 
-    match /users {
+    // 1. Users collection
+    match /users/{userId} {
       allow read: if isAuthenticated();
-      allow list: if isAdmin();
-      match /{userId} {
+      
+      // Users can create their own profile as 'viewer'
+      allow create: if isUser(userId) && request.resource.data.role == 'viewer';
+      
+      // Only Super Admin can delete users
+      allow delete: if isSuperAdmin();
+      
+      // Super Admin can update anything. 
+      // Admins can update other users (except role).
+      // Users can update their own profile (except role).
+      allow update: if isSuperAdmin() || 
+                    (isAdmin() && request.resource.data.role == resource.data.role) ||
+                    (isUser(userId) && request.resource.data.role == resource.data.role);
+
+      // 2. Tournament data (subcollections)
+      match /auditLogs/{logId} {
+        allow read: if isUser(userId) || isAdmin();
+        allow create: if isUser(userId) || isAdmin();
+        allow update: if false;
+        allow delete: if false;
+      }
+
+      match /{subcollection}/{document=**} {
         allow read: if isAuthenticated();
-        allow create: if isOwner(userId) && isValidUser();
-        allow update: if (isOwner(userId) && isValidUser()) || (isAdmin() && isValidUserForAdmin());
-        allow delete: if isAdmin();
-
-        match /groups {
-          allow read: if true;
-          match /{groupId} {
-            allow read: if true;
-            allow create: if isOwner(userId) && isValidGroup(userId);
-            allow update: if isOwner(userId) && isValidGroup(userId);
-            allow delete: if isOwner(userId) || isAdmin();
-          }
-        }
-
-        match /teams {
-          allow read: if true;
-          match /{teamId} {
-            allow read: if true;
-            allow create: if isOwner(userId) && isValidTeam(userId);
-            allow update: if isOwner(userId) && isValidTeam(userId);
-            allow delete: if isOwner(userId) || isAdmin();
-          }
-        }
-
-        match /fixtures {
-          allow read: if true;
-          allow create, update, write: if isOwner(userId) || isAdmin();
-          allow delete: if isOwner(userId) || isAdmin();
-          match /{fixtureId} {
-            allow read: if true;
-            allow create, update, write: if isOwner(userId) || isAdmin();
-            allow delete: if isOwner(userId) || isAdmin();
-          }
-        }
-
-        match /settings/{settingId} {
-          allow read: if true;
-          allow create: if isOwner(userId) && isValidSettings(userId);
-          allow update: if isOwner(userId) && isValidSettings(userId);
-          allow delete: if isOwner(userId) || isAdmin();
-        }
+        // Admins and Super Admins can manage any tournament data
+        // Users can manage their own tournament data
+        allow write: if isSuperAdmin() || isAdmin() || isUser(userId);
       }
     }
 
+    // 3. Public tournaments
     match /public_tournaments/{tournamentId} {
-      allow read: if true;
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.ownerId;
-      allow update, delete: if isAuthenticated() && request.auth.uid == resource.data.ownerId;
+      allow read: if true; // Publicly readable
+      allow write: if isSuperAdmin() || isAdmin() || isUser(tournamentId);
     }
 
-    // Default deny
+    // 4. Global catch-all
     match /{document=**} {
-      allow read, write: if false;
+      allow read: if isAuthenticated();
+      allow write: if isSuperAdmin() || isAdmin();
     }
   }
 }

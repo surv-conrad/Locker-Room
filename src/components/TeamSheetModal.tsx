@@ -8,6 +8,7 @@ import { generateId, cn } from '../utils';
 import { exportAsImage } from '../utils/exportImage';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../firebase';
+import { Tooltip, TooltipContent, TooltipTrigger } from './Tooltip';
 
 const PlayerPhoto = ({ player, className, onClick, isAdmin }: { player: Player, className?: string, onClick?: (e: React.MouseEvent) => void, isAdmin?: boolean }) => {
   const defaultPhoto = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=100&auto=format&fit=crop';
@@ -550,22 +551,30 @@ export function TeamSheetModal({ team, settings, isAdmin, onSave, onClose }: Tea
               onCancel={() => setShowResetConfirm(false)}
             />
             {isAdmin && (
-              <button
-                onClick={handleSaveAsDefault}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600/20 text-indigo-400 rounded-xl hover:bg-indigo-600/30 transition-colors font-medium text-sm border border-indigo-500/30"
-                title="Save current pitch size and player positions as default for all teams"
-              >
-                <Save className="w-4 h-4" /> Save Default Layout
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleSaveAsDefault}
+                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600/20 text-indigo-400 rounded-xl hover:bg-indigo-600/30 transition-colors font-medium text-sm border border-indigo-500/30"
+                  >
+                    <Save className="w-4 h-4" /> Save Default Layout
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Save current pitch size and player positions as default for all teams</TooltipContent>
+              </Tooltip>
             )}
             {viewMode === 'pitch' && (
-              <button
-                onClick={() => exportAsImage(pitchRef.current, `${team.name.toLowerCase().replace(/\s+/g, '-')}-pitch`)}
-                className="flex items-center gap-2 px-4 py-2 bg-emerald-600/20 text-emerald-400 rounded-xl hover:bg-emerald-600/30 transition-colors font-medium text-sm border border-emerald-500/30"
-                title="Export pitch as image"
-              >
-                <ImageIcon className="w-4 h-4" /> Export Image
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => exportAsImage(pitchRef.current, `${team.name.toLowerCase().replace(/\s+/g, '-')}-pitch`)}
+                    className="flex items-center gap-2 px-4 py-2 bg-emerald-600/20 text-emerald-400 rounded-xl hover:bg-emerald-600/30 transition-colors font-medium text-sm border border-emerald-500/30"
+                  >
+                    <ImageIcon className="w-4 h-4" /> Export Image
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Export pitch as image</TooltipContent>
+              </Tooltip>
             )}
             <div className="flex bg-white/5 rounded-xl p-1 border border-white/10">
               <button 
@@ -756,34 +765,42 @@ export function TeamSheetModal({ team, settings, isAdmin, onSave, onClose }: Tea
                             </td>
                             <td className="px-8 py-4">
                               <div className="flex items-center gap-2">
-                                <button 
-                                  onClick={() => isAdmin && toggleCaptain(player.id, 'captain')}
-                                  disabled={!isAdmin}
-                                  className={cn(
-                                    "p-2 rounded-xl transition-all border group/btn",
-                                    player.isCaptain 
-                                      ? "bg-yellow-400 text-black border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.4)]" 
-                                      : "bg-white/5 border-white/10 text-white/20 hover:text-white/60",
-                                    !isAdmin && "cursor-default hover:text-white/20"
-                                  )}
-                                  title="Set Captain"
-                                >
-                                  <Shield className="w-4 h-4" />
-                                </button>
-                                <button 
-                                  onClick={() => isAdmin && toggleCaptain(player.id, 'vice')}
-                                  disabled={!isAdmin}
-                                  className={cn(
-                                    "p-2 rounded-xl transition-all border",
-                                    player.isViceCaptain 
-                                      ? "bg-indigo-400 text-black border-indigo-400 shadow-[0_0_15px_rgba(129,140,248,0.4)]" 
-                                      : "bg-white/5 border-white/10 text-white/20 hover:text-white/60",
-                                    !isAdmin && "cursor-default hover:text-white/20"
-                                  )}
-                                  title="Set Vice Captain"
-                                >
-                                  <Star className="w-4 h-4" />
-                                </button>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button 
+                                      onClick={() => isAdmin && toggleCaptain(player.id, 'captain')}
+                                      disabled={!isAdmin}
+                                      className={cn(
+                                        "p-2 rounded-xl transition-all border group/btn",
+                                        player.isCaptain 
+                                          ? "bg-yellow-400 text-black border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.4)]" 
+                                          : "bg-white/5 border-white/10 text-white/20 hover:text-white/60",
+                                        !isAdmin && "cursor-default hover:text-white/20"
+                                      )}
+                                    >
+                                      <Shield className="w-4 h-4" />
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Set Captain</TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button 
+                                      onClick={() => isAdmin && toggleCaptain(player.id, 'vice')}
+                                      disabled={!isAdmin}
+                                      className={cn(
+                                        "p-2 rounded-xl transition-all border",
+                                        player.isViceCaptain 
+                                          ? "bg-indigo-400 text-black border-indigo-400 shadow-[0_0_15px_rgba(129,140,248,0.4)]" 
+                                          : "bg-white/5 border-white/10 text-white/20 hover:text-white/60",
+                                        !isAdmin && "cursor-default hover:text-white/20"
+                                      )}
+                                    >
+                                      <Star className="w-4 h-4" />
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Set Vice Captain</TooltipContent>
+                                </Tooltip>
                               </div>
                             </td>
                             {isAdmin && (
@@ -960,17 +977,21 @@ export function TeamSheetModal({ team, settings, isAdmin, onSave, onClose }: Tea
                               <div className="absolute inset-0 bg-indigo-600/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm">
                                 <RefreshCw className="w-8 h-8 text-white animate-spin-slow" />
                               </div>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setUpdatingPlayerId(player.id);
-                                  playerPhotoInputRef.current?.click();
-                                }}
-                                className="absolute top-1 right-1 p-1 bg-black/60 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity z-20 hover:bg-indigo-500"
-                                title="Change Photo"
-                              >
-                                <Camera className="w-3 h-3 text-white" />
-                              </button>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setUpdatingPlayerId(player.id);
+                                      playerPhotoInputRef.current?.click();
+                                    }}
+                                    className="absolute top-1 right-1 p-1 bg-black/60 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity z-20 hover:bg-indigo-500"
+                                  >
+                                    <Camera className="w-3 h-3 text-white" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent>Change Photo</TooltipContent>
+                              </Tooltip>
                             </>
                           )}
                         </div>

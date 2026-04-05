@@ -1,10 +1,10 @@
 {
-  "projectId": "gen-lang-client-0278753453",
-  "appId": "1:596041038880:web:b3c11b7f75c0409e995045",
-  "apiKey": "AIzaSyASKssboK0mti95yd1clRoWSZ639_YQpdU",
-  "authDomain": "gen-lang-client-0278753453.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-5f11d21f-a68b-4ff4-a138-ad31d58aabc3",
-  "storageBucket": "gen-lang-client-0278753453.firebasestorage.app",
-  "messagingSenderId": "596041038880",
+  "projectId": "locker-room-user-end",
+  "appId": "1:1064342066317:web:cae31832338e5079f27ec4",
+  "apiKey": "AIzaSyBEP-iDRezeb1seFaTBhepv5RnCy_pc7oY",
+  "authDomain": "locker-room-user-end.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "locker-room-user-end.appspot.com",
+  "messagingSenderId": "1064342066317",
   "measurementId": ""
 }

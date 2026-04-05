@@ -1,14 +1,16 @@
 import React, { useState, useRef } from 'react';
 import { Settings } from '../types';
-import { X, Save, Image as ImageIcon, Upload } from 'lucide-react';
+import { X, Save, Image as ImageIcon, Upload, Trash2 } from 'lucide-react';
+import { ConfirmModal } from './ConfirmModal';
 
 interface SettingsModalProps {
   settings: Settings;
   onSave: (settings: Settings) => void;
   onClose: () => void;
+  onDeleteTournament?: () => void;
 }
 
-export function SettingsModal({ settings, onSave, onClose }: SettingsModalProps) {
+export function SettingsModal({ settings, onSave, onClose, onDeleteTournament }: SettingsModalProps) {
   const [logoUrl, setLogoUrl] = useState(settings.logoUrl);
   const [startDate, setStartDate] = useState(settings.startDate);
   const [startTime, setStartTime] = useState(settings.startTime || '09:00');
@@ -16,6 +18,7 @@ export function SettingsModal({ settings, onSave, onClose }: SettingsModalProps)
   const [description, setDescription] = useState(settings.description || '');
   const [tieBreaker, setTieBreaker] = useState(settings.tieBreaker || 'goalDifference');
   const [primaryColor, setPrimaryColor] = useState(settings.primaryColor || '#4f46e5');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -38,6 +41,10 @@ export function SettingsModal({ settings, onSave, onClose }: SettingsModalProps)
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 500 * 1024) {
+        alert('Image is too large. Please upload an image smaller than 500KB.');
+        return;
+      }
       const reader = new FileReader();
       reader.onloadend = () => {
         setLogoUrl(reader.result as string);
@@ -201,8 +208,35 @@ export function SettingsModal({ settings, onSave, onClose }: SettingsModalProps)
               <Save className="w-4 h-4" /> Save Changes
             </button>
           </div>
+          
+          {onDeleteTournament && (
+            <div className="pt-6 mt-2 border-t border-gray-800/50">
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(true)}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 border border-red-500/20 rounded-xl transition-all duration-200 font-medium"
+              >
+                <Trash2 className="w-4 h-4" /> Delete Tournament
+              </button>
+            </div>
+          )}
         </form>
       </div>
+
+      <ConfirmModal
+        isOpen={showDeleteConfirm}
+        title="Delete Tournament"
+        message="Are you sure you want to delete this tournament? This action cannot be undone and will permanently delete all teams, groups, fixtures, and settings."
+        confirmText="Delete Tournament"
+        confirmStyle="danger"
+        onConfirm={() => {
+          if (onDeleteTournament) {
+            onDeleteTournament();
+            onClose();
+          }
+        }}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 }
